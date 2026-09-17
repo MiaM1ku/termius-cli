@@ -247,7 +247,7 @@ class ClientSession(object):
         self.session_key = _pad(self.S)
         self.K = self.session_key
         self.M1 = self._client_proof()
-        self.M2 = _blake2b(_minimal(self.A), self.M1, self.K)
+        self.M2 = self._server_proof()
         return True
 
     def _client_proof(self):
@@ -271,6 +271,18 @@ class ClientSession(object):
             h_k,
         )
 
+    def _server_proof(self):
+        """libtermius ``srp::common::AMK``.
+
+        AMK = H(encode(A) | encode(M) | H(K)) with Botan BigInt encode
+        (no leading zeros) and Blake2b-512. This is not H(A | M | K).
+        """
+        return _blake2b(
+            _minimal(self.A),
+            _minimal(_bytes_to_int(self.M1)),
+            _blake2b(self.K),
+        )
+
     def get_public_value(self):
         return _int_to_bytes(self.A)
 
@@ -280,23 +292,57 @@ class ClientSession(object):
     def validate_server_proof(self, proof):
         if proof is None:
             return False
-        if isinstance(proof, str) and (
-            proof.startswith('0x') or proof.startswith('0X')
-        ):
-            proof = botan_bigint_from_str(proof)
-        if isinstance(proof, int):
-            proof = _int_to_bytes(proof)
-        elif isinstance(proof, str):
-            try:
-                proof = base64.b64decode(proof)
-            except Exception:
-                proof = botan_bigint_from_str(proof)
-                proof = _int_to_bytes(proof)
-        return _to_bytes(proof) == self.M2
+        got = proof_to_int(proof)
+        if got is None:
+            return False
+        return got == _bytes_to_int(self.M2)
 
     def get_secret_key(self):
         return self.K
 
     def get_salted_secret_key(self, session_salt):
-        """Derive the 32-byte key used to unwrap the DeviceToken."""
-        return hashlib.sha256(self.K + _to_bytes(session_salt)).digest()
+        """Argon2id key used to unwrap the DeviceToken.
+
+        libtermius ``MakeSaltedSecretKey``:
+        ``crypto_pwhash(Base64(K), session_salt)`` with the same Argon2id
+        parameters as the vault password (opslimit=2, memlimit=64MiB).
+        ``session_salt`` is 16 bytes. SHA-256(K || salt) is wrong.
+        """
+        salt = _to_bytes(session_salt)
+        if len(salt) != 16:
+            raise ValueError(
+                'session salt must be 16 bytes, got {}'.format(len(salt))
+            )
+        from .sodium import derive_key_from_password
+        return derive_key_from_password(base64.b64encode(self.K), salt)
+
+
+def proof_to_int(proof):
+    """Parse an SRP proof as a Botan BigInt (hex on the wire)."""
+    if proof is None:
+        return None
+    if isinstance(proof, int):
+        return proof
+    if isinstance(proof, dict) and proof.get('type') == 'Buffer':
+        proof = bytes(proof.get('data') or [])
+    if isinstance(proof, list):
+        proof = bytes(proof)
+    if isinstance(proof, (bytes, bytearray)):
+        text = bytes(proof).strip()
+        if text.startswith(b'0x') or text.startswith(b'0X'):
+            return int(text, 16)
+        if (
+            text
+            and all(chr(byte) in '0123456789abcdefABCDEF' for byte in text)
+            and len(text) >= 8
+        ):
+            return int(text, 16)
+        return _bytes_to_int(proof)
+    text = str(proof).strip()
+    if not text:
+        return None
+    if text.startswith('0x') or text.startswith('0X'):
+        return int(text, 16)
+    if all(c in '0123456789abcdefABCDEF' for c in text) and len(text) >= 8:
+        return int(text, 16)
+    return botan_bigint_from_str(text)

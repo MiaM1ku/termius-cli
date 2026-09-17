@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 
 import base64
 import logging
+import re
 
 from ...core.constants import (
     API_HOST, GRPC_MOBILE_TYPE_DESKTOP, LOGIN_NAMESPACE, SOCKETIO_GRPC_PATH,
@@ -106,6 +107,63 @@ def _first(payload, *keys):
     return None
 
 
+_CAMEL_1 = re.compile(r'(.)([A-Z][a-z]+)')
+_CAMEL_2 = re.compile(r'([a-z0-9])([A-Z])')
+
+
+def to_snake_case(name):
+    """lodash ``snakeCase`` used by desktop on gRPC JSON keys."""
+    if not isinstance(name, str) or not name:
+        return name
+    if name.endswith('List') and len(name) > 4:
+        name = name[:-4]
+    name = _CAMEL_1.sub(r'\1_\2', name)
+    name = _CAMEL_2.sub(r'\1_\2', name)
+    return name.lower()
+
+
+def snake_case_payload(value):
+    """Recursively convert proto-JSON camelCase keys to snake_case.
+
+    Desktop does ``Sfe(response, (_, key) => snakeCase(key.replace(/List$/, '')))``.
+    Without this, ``hmacSalt`` is dropped and pull cannot open the vault.
+    """
+    if isinstance(value, dict):
+        if value.get('type') == 'Buffer' and isinstance(value.get('data'), list):
+            return value
+        return {
+            to_snake_case(key): snake_case_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [snake_case_payload(item) for item in value]
+    return value
+
+
+def unwrap_device_token(session, session_salt, token):
+    """Decrypt ``credentials.token`` with the SRP session key.
+
+    Desktop ``tSt``: ``FromEncryptionKey(getSaltedSecretKey(sessionSalt)).decrypt(token)``.
+    """
+    if not token:
+        raise ApiError('Login response did not include a device token')
+    if not session_salt:
+        raise ApiError('Login response did not include session_salt')
+    salt = bytes_field(session_salt)
+    ciphertext = bytes_field(token)
+    if salt is None or ciphertext is None:
+        raise ApiError('Login response session_salt/token could not be decoded')
+    try:
+        key = session.get_salted_secret_key(salt)
+        return SodiumSecretCryptor(key).decrypt(ciphertext)
+    except Exception as exc:
+        raise ApiError(
+            'Could not unwrap DeviceToken with the SRP session key: {}'.format(
+                exc
+            )
+        )
+
+
 class GrpcLoginClient(object):
     """Login via ``wss://api.termius.com/login_v2`` Socket.IO proxy."""
 
@@ -192,6 +250,7 @@ class GrpcLoginClient(object):
                 raise ApiError(self._timeout_message(
                     'salt', events, firebase_token=firebase_token,
                 ))
+            initial = snake_case_payload(initial)
 
             identifier = (
                 _first(initial, 'identifier', 'Identifier')
@@ -251,6 +310,7 @@ class GrpcLoginClient(object):
                 raise ApiError(self._timeout_message(
                     'proof', events, firebase_token=firebase_token,
                 ))
+            final = snake_case_payload(final)
 
             if not session.validate_server_proof(
                 _first(final, 'proof')
@@ -262,13 +322,9 @@ class GrpcLoginClient(object):
             )
             token = credentials.get('token')
             session_salt = _first(final, 'sessionSalt', 'session_salt')
-            if token and session_salt:
-                key = session.get_salted_secret_key(bytes_field(session_salt))
-                cryptor = SodiumSecretCryptor(key)
-                try:
-                    credentials['token'] = cryptor.decrypt(bytes_field(token))
-                except Exception:
-                    LOGGER.debug('DeviceToken unwrap failed; using raw token')
+            credentials['token'] = unwrap_device_token(
+                session, session_salt, token,
+            )
 
             return {
                 'credentials': credentials,

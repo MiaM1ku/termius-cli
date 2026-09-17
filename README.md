@@ -30,6 +30,7 @@ use a venv as above, or `pipx install -e .`.
 termius init                         # login, pull, import ssh config, push
 termius login -u you@example.com
 termius login --google               # print SSO URL, paste termius:// callback
+                                     # then enter the vault encryption password
 termius pull
 termius hosts
 termius info myhost

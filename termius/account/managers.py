@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Module with Account manager."""
+import base64
 import uuid
 
 from six.moves import configparser
@@ -11,6 +12,51 @@ from ..core.exceptions import (
 )
 from ..cloud.client.grpc_login import GrpcLoginClient
 from ..cloud.client.browser_sso import BrowserSso
+
+_SCHEMA_NAMES = {
+    0: 'v3',
+    1: 'v3',
+    2: 'v5',
+    '0': 'v3',
+    '1': 'v3',
+    '2': 'v5',
+    'undefined': 'v3',
+    'v3': 'v3',
+    'v5': 'v5',
+}
+
+
+def _camel(name):
+    parts = name.split('_')
+    return parts[0] + ''.join(part[:1].upper() + part[1:] for part in parts[1:])
+
+
+def _b64_field(credentials, payload, *keys):
+    """Pick a credential string, accepting camelCase aliases."""
+    for source in (credentials, payload):
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if value not in (None, ''):
+                if isinstance(value, (bytes, bytearray)):
+                    return base64.b64encode(bytes(value)).decode('ascii')
+                return value
+    return None
+
+
+def _encryption_schema(value, default='v3'):
+    if value is None:
+        return default
+    mapped = _SCHEMA_NAMES.get(value)
+    if mapped:
+        return mapped
+    mapped = _SCHEMA_NAMES.get(str(value).lower())
+    if mapped:
+        return mapped
+    if isinstance(value, str) and value:
+        return value
+    return default
 
 
 class AccountManager(object):
@@ -45,27 +91,33 @@ class AccountManager(object):
 
         credentials = payload.get('credentials') or payload
         token = credentials.get('token') or payload.get('token')
-        hmac_salt = credentials.get('hmac_salt') or payload.get('hmac_salt')
-        salt = credentials.get('salt') or payload.get('salt')
+        hmac_salt = _b64_field(
+            credentials, payload, 'hmac_salt', 'hmacSalt',
+        )
+        salt = _b64_field(credentials, payload, 'salt')
         if not token:
             raise OptionNotSetException('Login response did not include a token')
+        if not salt or not hmac_salt:
+            raise OptionNotSetException(
+                'Login response missing vault salts (salt/hmac_salt). '
+                'Sign in again after upgrading termius-cli.'
+            )
 
         self.config.set('User', 'username', username)
         self.config.set('User', 'apikey', token)
         self.config.set('User', 'token_type', 'device')
-        if hmac_salt:
-            self.config.set('User', 'hmac_salt', hmac_salt)
-        if salt:
-            self.config.set('User', 'salt', salt)
+        self.config.set('User', 'hmac_salt', hmac_salt)
+        self.config.set('User', 'salt', salt)
 
         bulk = payload.get('bulk_account') or {}
         account = bulk.get('account') or payload.get('account') or {}
         schema = (
             (account.get('feature_toggles') or {}).get('encryption_schema')
+            or (account.get('featureToggles') or {}).get('encryptionSchema')
             or payload.get('encryption_schema')
             or 'v3'
         )
-        self.config.set('User', 'encryption_schema', schema)
+        self.config.set('User', 'encryption_schema', _encryption_schema(schema))
         user_id = account.get('user_id')
         if user_id:
             self.config.set('User', 'user_id', str(user_id))
@@ -76,13 +128,16 @@ class AccountManager(object):
                 'User', 'can_manage_team',
                 'yes' if team.get('is_owner') else 'no',
             )
-        pkset = credentials.get('personal_keyset') or {}
+        pkset = credentials.get('personal_keyset') or credentials.get(
+            'personalKeyset'
+        ) or {}
         if isinstance(pkset, dict):
             for key in (
                 'public_key', 'encrypted_private_key', 'encrypted_personal_key',
             ):
-                if pkset.get(key):
-                    self.config.set('User', key, pkset[key])
+                value = pkset.get(key) or pkset.get(_camel(key))
+                if value:
+                    self.config.set('User', key, value)
         self.config.write()
         return payload
 
