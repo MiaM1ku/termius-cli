@@ -1,0 +1,42 @@
+inherits:
+  - strictness_veryhigh
+  - full_pep8
+  - doc_warnings
+
+ignore-paths:
+  - .git
+  - setup.py
+  - build
+  - tests
+  - termius/core/utils.py  # it's too complex
+  - termius/core/commands/help.py  # it's too complex
+
+
+ignore-patterns:
+  - (^|/)(?!termius)?(/|$)
+
+pep257:
+  disable:
+    - D203  # 1 blank line required before
+    - D213
+    - D400
+    - D415
+
+pylint:
+  options:
+    max-parents: 12
+  enable:
+    - fixme
+  disable:
+    - super-on-old-class
+    - no-self-use
+    - useless-object-inheritance
+    - consider-using-dict-comprehension
+    - keyword-arg-before-vararg
+
+pyroma:
+  run: true
+
+mccabe:
+  options:
+    max-complexity: 6

@@ -1,0 +1,8 @@
+[run]
+branch = True
+source = termius
+omit = tests/unit/*
+
+[report]
+precision = 2
+show_missing = True

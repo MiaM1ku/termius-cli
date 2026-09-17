@@ -1,0 +1,24 @@
+*~
+\#*
+.DS_Store
+
+.idea
+.tox
+.coverage
+
+*.pyc
+*.pyo
+dist
+*.egg-info
+/build
+.ropeproject
+.eggs
+__pycache__
+coverage.xml
+
+# Local / desktop leftovers — do not publish the Termius app bundle
+/resources/
+/package.json
+*.i64
+.venv
+venv/
