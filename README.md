@@ -36,6 +36,7 @@ termius hosts
 termius info myhost
 termius ssh-command myhost           # print ssh(1) without connecting
 termius connect myhost
+termius exec myhost -- uname -a      # run a command over SSH
 termius status
 termius export-ssh-config
 ```
@@ -86,6 +87,7 @@ Tools:
 | `termius_hosts` | List hosts |
 | `termius_host_info` | One host + generated `ssh` command |
 | `termius_ssh_command` | `ssh` command only |
+| `termius_exec` | Run a command on the host over SSH |
 | `termius_identities` | Usernames / key labels (no secrets) |
 | `termius_keys` | SSH key labels (no private material) |
 | `termius_groups` | Groups |

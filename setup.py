@@ -54,6 +54,7 @@ handlers = [
     'status = termius.handlers.status:StatusCommand',
     'ssh-command = termius.handlers.ssh_command:SshCommandCommand',
     'mcp = termius.handlers.mcp:McpCommand',
+    'exec = termius.handlers.exec:ExecCommand',
 ]
 
 

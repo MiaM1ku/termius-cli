@@ -13,6 +13,7 @@ from ..core.settings import Config
 from ..core.storage import ApplicationStorage
 from ..core.storage.strategies import RelatedGetStrategy
 from ..formatters.mixins import SshCommandFormatterMixin
+from ..core.ssh_exec import SshExecError, run_host_command
 
 
 PROTOCOL_VERSION = '2024-11-05'
@@ -81,6 +82,32 @@ TOOLS = [
             'required': ['name'],
         },
     },
+    {
+        'name': 'termius_exec',
+        'description': (
+            'Run a shell command on a Termius host over SSH and return '
+            'stdout/stderr/exit_code. Uses the host username, password or '
+            'key from the vault. Do not echo secrets.'
+        ),
+        'inputSchema': {
+            'type': 'object',
+            'properties': {
+                'name': {
+                    'type': 'string',
+                    'description': 'Host id or label',
+                },
+                'command': {
+                    'type': 'string',
+                    'description': 'Shell command to run on the remote host',
+                },
+                'timeout': {
+                    'type': 'integer',
+                    'description': 'Seconds to wait (default 60)',
+                },
+            },
+            'required': ['name', 'command'],
+        },
+    },
 ]
 
 
@@ -135,11 +162,15 @@ def handle_tool(ctx, name, arguments):
         query = (arguments.get('query') or '').lower()
         rows = []
         for host in ctx.storage.get_all(Host):
+            ssh_config = ctx.get_merged_ssh_config(host)
+            identity = ssh_config.identity
             row = {
                 'id': host.id,
                 'label': host.label,
                 'address': host.address,
                 'group': getattr(host.group, 'label', None),
+                'username': identity.username if identity else None,
+                'has_password': bool(identity and identity.password),
             }
             blob = json.dumps(row).lower()
             if not query or query in blob:
@@ -205,6 +236,22 @@ def handle_tool(ctx, name, arguments):
             ssh_config, host.address, ssh_key and ssh_key.file_path(ctx)
         ).strip()
         return _ok({'ssh_command': command})
+    if name == 'termius_exec':
+        host = _find(ctx.storage, Host, arguments['name'])
+        ssh_config = ctx.get_merged_ssh_config(host)
+        timeout = arguments.get('timeout') or 60
+        try:
+            timeout = int(timeout)
+        except (TypeError, ValueError):
+            timeout = 60
+        try:
+            result = run_host_command(
+                host, ssh_config, arguments.get('command'), timeout=timeout,
+            )
+        except SshExecError as exc:
+            return _ok({'ok': False, 'error': str(exc)})
+        result['ok'] = result.get('exit_code') == 0
+        return _ok(result)
     raise ValueError('Unknown tool: {}'.format(name))
 
 

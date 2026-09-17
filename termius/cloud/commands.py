@@ -95,6 +95,7 @@ class PushCommand(CloudSynchronizationCommand):
 class PullCommand(CloudSynchronizationCommand):
     """pull data from the Termius Cloud"""
 
+    get_strategy = RelatedGetStrategy
     save_strategy = SyncSaveStrategy
 
     def process_sync(self, api_controller):

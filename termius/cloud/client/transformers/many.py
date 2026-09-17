@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Module with many then 1 entry transformers."""
 from collections import OrderedDict
+from logging import getLogger
 from ....core.exceptions import DoesNotExistException, SkipField
 from ....core.storage.strategies import SoftDeleteStrategy
 from ....core.models.terminal import (
@@ -13,6 +14,14 @@ from ....core.models.terminal import (
 from .base import Transformer, DeletBadEncrypted
 from .single import GetPrimaryKeyTransformerMixin, CryptoBulkEntryTransformer
 from .mixins import CryptoChildTransformerCreatorMixin
+
+
+def _ref_id(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value.get('id')
+    return value
 
 
 # pylint: disable=abstract-method
@@ -84,6 +93,7 @@ class BulkTransformer(CryptoChildTransformerCreatorMixin,
     """Transformer for entry list."""
 
     child_transformer_class = CryptoBulkEntryTransformer
+    logger = getLogger(__name__)
 
     def __init__(self, crypto_controller, **kwargs):
         """Construct new transformer for entry list."""
@@ -115,7 +125,42 @@ class BulkTransformer(CryptoChildTransformerCreatorMixin,
         deleted = payload.pop('deleted_sets', None) or payload.pop('delete_sets', None) or {}
         models['deleted_sets'] = self.deleted_sets_transformer.to_model(deleted)
         self.delete_list(bad_encrypted_models)
+        self.apply_sshconfig_identities(payload)
         return models
+
+    def apply_sshconfig_identities(self, payload):
+        """Attach team/shared identities onto ssh_config rows.
+
+        v5 ``sshconfig_set`` leaves ``identity`` null; the link lives in
+        ``sharedsshconfigidentity_set`` / ``sshconfigidentity_set``.
+        """
+        linked = 0
+        for set_name in (
+            'sshconfigidentity_set', 'sharedsshconfigidentity_set',
+        ):
+            for row in payload.get(set_name) or []:
+                if self._link_sshconfig_identity(row):
+                    linked += 1
+        if linked:
+            self.logger.info('Linked %s ssh_config identities', linked)
+
+    def _link_sshconfig_identity(self, row):
+        ssh_id = _ref_id(row.get('ssh_config'))
+        ident_id = _ref_id(row.get('identity'))
+        if not ssh_id or not ident_id:
+            return False
+        try:
+            ssh_config = self.storage.get(
+                SshConfig, **{'remote_instance.id': ssh_id}
+            )
+            identity = self.storage.get(
+                Identity, **{'remote_instance.id': ident_id}
+            )
+        except DoesNotExistException:
+            return False
+        ssh_config.identity = identity
+        self.storage.save(ssh_config)
+        return True
 
     def to_payload(self, model):
         """Convert model to payload with set list."""
