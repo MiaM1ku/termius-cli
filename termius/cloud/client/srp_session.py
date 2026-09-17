@@ -167,8 +167,20 @@ class ClientSession(object):
 
     def configure(self, identifier, password, salt, version=1):
         self.identifier = _to_bytes(identifier)
-        self.password = _to_bytes(password)
         self.salt = _to_bytes(salt)
+        if len(self.salt) != 16:
+            raise ValueError(
+                'SRP salt must be 16 bytes, got {}'.format(len(self.salt))
+            )
+        # libtermius Argon2id-hashes the vault password, then uses the
+        # base64 key as SRP P. The raw password yields INVALID_PROOF.
+        from .sodium import hash_srp_password
+        try:
+            version = int(version)
+        except (TypeError, ValueError):
+            version = 1
+        self.version = 1 if version == 1 else version
+        self.password = _to_bytes(hash_srp_password(password, self.salt))
         self.a = _bytes_to_int(os.urandom(32)) % (N - 1) + 1
         self.A = pow(G, self.a, N)
         inner = _sha256(self.identifier, b':', self.password)

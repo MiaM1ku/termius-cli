@@ -4,7 +4,7 @@ from os import urandom
 from unittest import TestCase
 
 from termius.cloud.client.cryptor import UnifiedCryptor
-from termius.cloud.client.sodium import SodiumSecretCryptor
+from termius.cloud.client.sodium import SodiumSecretCryptor, hash_srp_password
 
 
 class SodiumCryptorTest(TestCase):
@@ -16,6 +16,16 @@ class SodiumCryptorTest(TestCase):
         self.assertEqual(blob[0], 4)
         self.assertEqual(blob[1], 1)
         self.assertEqual(cryptor.decrypt(blob), text)
+
+    def test_hash_srp_password_is_padded_base64_of_32_bytes(self):
+        salt = b'\x00' * 16
+        hashed = hash_srp_password('vault-pass', salt)
+        self.assertEqual(len(hashed), 44)
+        self.assertTrue(hashed.endswith('='))
+        import base64
+        raw = base64.b64decode(hashed)
+        self.assertEqual(len(raw), 32)
+        self.assertNotEqual(hash_srp_password('other', salt), hashed)
 
     def test_from_password(self):
         password = 'secret'

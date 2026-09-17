@@ -6,7 +6,8 @@ from termius.cloud.client.grpc_login import (
     omit_none,
 )
 from termius.cloud.client.srp_session import (
-    G, N, P_BYTES, _minimal, botan_bigint_from_str, botan_bigint_to_str,
+    G, N, P_BYTES, ClientSession, _minimal, botan_bigint_from_str,
+    botan_bigint_to_str,
 )
 from termius.core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 
@@ -93,6 +94,11 @@ class BotanBigIntTest(TestCase):
         self.assertEqual(botan_bigint_from_str('0x0A'), 10)
         self.assertEqual(botan_bigint_from_str('0xab'), 0xAB)
 
+    def test_parse_hex_without_0x(self):
+        # Short all-hex strings can also be base64; require >= 8 hex chars.
+        self.assertEqual(botan_bigint_from_str('DEADBEEF'), 0xDEADBEEF)
+        self.assertEqual(botan_bigint_from_str('994B00FF'), 0x994B00FF)
+
     def test_roundtrip_bytes(self):
         value = int.from_bytes(b'\xde\xad\xbe\xef', 'big')
         encoded = botan_bigint_to_str(value)
@@ -107,3 +113,18 @@ class SrpEncodingTest(TestCase):
     def test_n_is_group_size(self):
         self.assertEqual(len(_minimal(N)), P_BYTES)
         self.assertEqual(P_BYTES, 1024)
+
+
+class SrpPasswordHashTest(TestCase):
+    def test_configure_rejects_short_salt(self):
+        session = ClientSession()
+        with self.assertRaises(ValueError):
+            session.configure('id', 'pass', b'short')
+
+    def test_configure_does_not_use_raw_password(self):
+        salt = b'\x11' * 16
+        identifier = '11111111-1111-1111-1111-111111111111'
+        session = ClientSession()
+        session.configure(identifier, 'vault-pass', salt)
+        self.assertNotEqual(session.password, b'vault-pass')
+        self.assertEqual(len(session.password), 44)

@@ -124,7 +124,9 @@ Termius Cloud currently has two personal encryption schemas:
 
 The CLI auto-detects ciphertext version (`A…` = v3, `B…` = v5). Login uses
 gRPC/SRP first (desktop `login_v2`); REST is only the fallback for accounts
-that are not migrated (`NOT_MIGRATED`).
+that are not migrated (`NOT_MIGRATED`). For v5 SRP the vault password is
+Argon2id-hashed (libsodium interactive, 16-byte salt) and base64-encoded
+before the proof — the same transform as Termius desktop 10.x.
 
 Team vaults: `termius pull` loads `/api/v4/team/vault/keys/`, unwraps each `encrypted_with` key with the personal X25519 keypair (ECDH + HChaCha20 + XChaCha20-Poly1305), and decrypts shared hosts/keys/identities. Entities whose vault key is missing are skipped, not deleted.
 

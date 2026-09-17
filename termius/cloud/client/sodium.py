@@ -7,6 +7,7 @@ Reversed from Termius 10.0.6 ``@termius/libtermius``:
 """
 from __future__ import unicode_literals
 
+import base64
 import os
 
 from nacl.bindings import (
@@ -61,6 +62,17 @@ def derive_key_from_password(password, salt):
         opslimit=argon2id.OPSLIMIT_INTERACTIVE,
         memlimit=argon2id.MEMLIMIT_INTERACTIVE,
     )
+
+
+def hash_srp_password(password, salt):
+    """Vault password as used by libtermius ``ClientSession.configure``.
+
+    Native login runs ``crypto_pwhash`` (Argon2id, opslimit=2, memlimit=64MiB)
+    over the encryption password and the 16-byte SRP salt, then Botan-base64
+    encodes the 32-byte key (standard alphabet, ``=`` padding). That ASCII
+    string is the SRP password ``P`` in ``x = H(s | H(I | ":" | P))``.
+    """
+    return base64.b64encode(derive_key_from_password(password, salt)).decode('ascii')
 
 
 class SodiumSecretCryptor(object):

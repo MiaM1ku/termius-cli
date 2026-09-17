@@ -35,6 +35,23 @@ def omit_none(value):
     return value
 
 
+def _public_kind(value):
+    """Classify the server public B encoding without logging secrets."""
+    if value is None:
+        return ''
+    if isinstance(value, (bytes, bytearray)):
+        return 'bytes:{}'.format(len(value))
+    if isinstance(value, dict):
+        return 'object'
+    text = str(value).strip()
+    if text.startswith('0x') or text.startswith('0X'):
+        return '0x-hex'
+    hexchars = set('0123456789abcdefABCDEF')
+    if text and all(c in hexchars for c in text) and len(text) >= 8:
+        return 'hex'
+    return 'other'
+
+
 def grpc_device(device):
     """Desktop gRPC device: ``mobile_type`` is enum 3, not ``"Desktop"``."""
     payload = dict(device or {})
@@ -183,6 +200,10 @@ class GrpcLoginClient(object):
             )
             salt = bytes_field(_first(initial, 'salt'))
             public_data = _first(initial, 'publicData', 'public_data')
+            version = initial.get('version')
+            public_text = (
+                public_data if isinstance(public_data, str) else str(public_data)
+            )
             events['srp_meta'] = {
                 'keys': sorted(initial.keys()) if isinstance(initial, dict) else str(type(initial)),
                 'identifier_len': len(identifier or ''),
@@ -191,7 +212,10 @@ class GrpcLoginClient(object):
                     else 'account_email' if account_email else 'email'
                 ),
                 'salt_len': len(salt or b''),
-                'public_prefix': str(public_data)[:4] if public_data else '',
+                'public_prefix': public_text[:4] if public_data else '',
+                'public_len': len(public_text) if public_data else 0,
+                'public_kind': _public_kind(public_data),
+                'version': version,
             }
             LOGGER.debug(
                 'SRP initial field types=%s',
@@ -203,7 +227,10 @@ class GrpcLoginClient(object):
                 )
 
             session = ClientSession()
-            session.configure(identifier, password, salt)
+            try:
+                session.configure(identifier, password, salt, version=version)
+            except ValueError as exc:
+                raise ApiError(str(exc))
             if not session.agree_server_public_value(public_data):
                 raise ApiError('Invalid SRP server public value')
 
@@ -323,8 +350,9 @@ class GrpcLoginClient(object):
         if code == INVALID_PROOF or key == 'INVALID_PROOF':
             raise ApiError(
                 'SRP proof rejected (not 2FA — that would ask for an '
-                'authenticator code). Vault password is used, but the CLI '
-                'proof still does not match the app. meta={}'.format(meta),
+                'authenticator code). The vault password is Argon2id-hashed '
+                'then proven; a mismatch usually means the encryption '
+                'password is wrong. meta={}'.format(meta),
                 payload=error,
             )
         if code == INVALID_PUBLIC_DATA or key == 'INVALID_PUBLIC_DATA':
