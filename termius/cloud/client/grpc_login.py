@@ -123,8 +123,10 @@ class GrpcLoginClient(object):
         def on_error(data):
             events['error'] = data
 
-        def on_disconnect():
+        def on_disconnect(*args):
             events['disconnected'] = True
+            if args:
+                events['disconnect_reason'] = args[0]
 
         sio.on('connect', on_connect, namespace=namespace)
         sio.on('disconnect', on_disconnect, namespace=namespace)
@@ -141,8 +143,13 @@ class GrpcLoginClient(object):
                 namespaces=[namespace],
                 socketio_path=SOCKETIO_GRPC_PATH,
                 transports=['websocket'],
-                wait_timeout=15,
+                wait_timeout=120,
             )
+            # Desktop waits 120s; keep Engine.IO from dropping while the
+            # server computes 8192-bit SRP (handshake advertises 20s).
+            eio = getattr(sio, 'eio', None)
+            if eio is not None:
+                eio.ping_timeout = 120
             sio.emit(
                 'initialRequest',
                 build_initial_request(
@@ -224,12 +231,13 @@ class GrpcLoginClient(object):
                 pass
 
     @staticmethod
-    def _wait(sio, events, keys, timeout=20.0):
+    def _wait(sio, events, keys, timeout=120.0):
         steps = max(int(timeout / 0.25), 1)
         for _ in range(steps):
             if any(key in events for key in keys):
                 return
             if events.get('disconnected'):
+                sio.sleep(0.5)
                 return
             sio.sleep(0.25)
 
@@ -237,7 +245,14 @@ class GrpcLoginClient(object):
     def _timeout_message(stage, events, firebase_token=None):
         bits = ['SRP login timed out waiting for {}'.format(stage)]
         if events.get('disconnected'):
-            bits.append('socket closed before the server replied')
+            reason = events.get('disconnect_reason')
+            if reason:
+                bits.append('socket closed ({})'.format(reason))
+            else:
+                bits.append('socket closed before the server replied')
+        log = events.get('log') or []
+        if log:
+            bits.append('events={}'.format(','.join(log)))
         if firebase_token:
             bits.append('re-run: termius login --google')
         return '; '.join(bits)
