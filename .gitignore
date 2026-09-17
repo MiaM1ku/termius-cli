@@ -22,3 +22,9 @@ coverage.xml
 *.i64
 .venv
 venv/
+*.xapk
+/AuthorizationForm-*.js
+/OtpLogin-*.js
+/SignInScreen-*.js
+/firebase-*.js
+/login-*.js

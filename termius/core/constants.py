@@ -9,6 +9,10 @@ API_BASE_URL = 'https://{}/'.format(API_HOST)
 WS_BASE_URL = 'wss://{}'.format(API_HOST)
 SOCKETIO_GRPC_PATH = '/socket.io/grpc-proxy'
 LOGIN_NAMESPACE = '/login_v2'
+
+# gRPC login overwrites device.mobile_type with this enum. REST still
+# sends the string "Desktop" from DeviceIdentity.to_json().
+GRPC_MOBILE_TYPE_DESKTOP = 3
 SSO_DESKTOP_URL = 'https://account.termius.com/sso/desktop'
 FIREBASE_API_KEY = 'AIzaSyBFnPuANmLK2HzicAwuuDffSjRcW1FGDCU'
 FIREBASE_AUTH_REFERER = 'https://account.termius.com/'

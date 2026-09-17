@@ -4,16 +4,53 @@ from __future__ import unicode_literals
 import base64
 import logging
 
-from ...core.constants import API_HOST, LOGIN_NAMESPACE, SOCKETIO_GRPC_PATH
+from ...core.constants import (
+    API_HOST, GRPC_MOBILE_TYPE_DESKTOP, LOGIN_NAMESPACE, SOCKETIO_GRPC_PATH,
+)
 from ...core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 from .sodium import SodiumSecretCryptor
 from .srp_session import ClientSession
 
 LOGGER = logging.getLogger(__name__)
 
-NOT_MIGRATED = 7
+UNAUTHENTICATED = 2
 OTP_TOKEN_REQUIRED = 3
+THROTTLED = 4
+APP_OUTDATED = 6
+NOT_MIGRATED = 7
 OTP_TOKEN_ERROR = 10
+LOGIN_APPROVE_REQUIRED = 12
+
+
+def omit_none(value):
+    """Drop ``None`` entries so JSON matches JS ``JSON.stringify``."""
+    if isinstance(value, dict):
+        return {
+            key: omit_none(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    return value
+
+
+def grpc_device(device):
+    """Desktop gRPC device: ``mobile_type`` is enum 3, not ``"Desktop"``."""
+    payload = dict(device or {})
+    payload['sub_name'] = payload.get('sub_name') or ''
+    payload['mobile_type'] = GRPC_MOBILE_TYPE_DESKTOP
+    return omit_none(payload)
+
+
+def build_initial_request(email, device, authy_token=None,
+                          firebase_token=None, domain_sso_token=None):
+    """Build ``initialRequest`` matching Termius desktop 10.x."""
+    return omit_none({
+        'email': email or '',
+        'device': grpc_device(device),
+        'otp_token': authy_token,
+        'firebase_token': firebase_token,
+        'domain_sso_token': domain_sso_token,
+    })
 
 
 def _b64(data):
@@ -32,6 +69,24 @@ def _unb64(data):
     return base64.b64decode(data)
 
 
+def bytes_field(value):
+    """Accept base64, raw bytes, or Node ``{type: Buffer, data: [...]}``."""
+    if value is None:
+        return None
+    if isinstance(value, dict) and value.get('type') == 'Buffer':
+        return bytes(value.get('data') or [])
+    if isinstance(value, list):
+        return bytes(value)
+    return _unb64(value)
+
+
+def _first(payload, *keys):
+    for key in keys:
+        if payload.get(key) not in (None, ''):
+            return payload.get(key)
+    return None
+
+
 class GrpcLoginClient(object):
     """Login via ``wss://api.termius.com/login_v2`` Socket.IO proxy."""
 
@@ -48,8 +103,11 @@ class GrpcLoginClient(object):
                 'python-socketio is required for SRP login: {}'.format(exc)
             )
 
-        sio = socketio.Client(reconnection=False, logger=False)
+        sio = socketio.Client(
+            reconnection=False, logger=False, handle_sigint=False,
+        )
         events = {}
+        namespace = LOGIN_NAMESPACE
 
         def on_connect():
             events['connected'] = True
@@ -63,11 +121,16 @@ class GrpcLoginClient(object):
         def on_error(data):
             events['error'] = data
 
-        namespace = LOGIN_NAMESPACE
+        def on_disconnect():
+            events['disconnected'] = True
+
         sio.on('connect', on_connect, namespace=namespace)
+        sio.on('disconnect', on_disconnect, namespace=namespace)
         sio.on('initialResponse', on_initial, namespace=namespace)
         sio.on('finalResponse', on_final, namespace=namespace)
         sio.on('grpc-error-response', on_error, namespace=namespace)
+        sio.on('grpc-stream-error', on_error, namespace=namespace)
+        sio.on('proxy-error', on_error, namespace=namespace)
         sio.on('error', on_error, namespace=namespace)
 
         try:
@@ -76,35 +139,39 @@ class GrpcLoginClient(object):
                 namespaces=[namespace],
                 socketio_path=SOCKETIO_GRPC_PATH,
                 transports=['websocket'],
-                wait_timeout=30,
+                wait_timeout=15,
             )
             sio.emit(
                 'initialRequest',
-                {
-                    'otp_token': authy_token,
-                    'email': email,
-                    'domain_sso_token': domain_sso_token,
-                    'device': dict(device, sub_name='', mobile_type='Desktop'),
-                    'firebase_token': firebase_token,
-                },
+                build_initial_request(
+                    email, device,
+                    authy_token=authy_token,
+                    firebase_token=firebase_token,
+                    domain_sso_token=domain_sso_token,
+                ),
                 namespace=namespace,
             )
-            for _ in range(60):
-                if 'initial' in events or 'error' in events:
-                    break
-                sio.sleep(0.5)
+            self._wait(sio, events, ('initial', 'error'))
             self._raise_if_error(events.get('error'))
             initial = events.get('initial')
             if not initial:
-                raise ApiError('SRP login timed out waiting for salt')
+                raise ApiError(self._timeout_message(
+                    'salt', events, firebase_token=firebase_token,
+                ))
+
+            identifier = _first(initial, 'identifier') or email
+            salt = bytes_field(_first(initial, 'salt'))
+            public_data = bytes_field(
+                _first(initial, 'publicData', 'public_data')
+            )
+            if not identifier or not salt or not public_data:
+                raise ApiError(
+                    'SRP salt response was missing identifier/salt/publicData'
+                )
 
             session = ClientSession()
-            session.configure(
-                initial.get('identifier') or email,
-                password,
-                _unb64(initial.get('salt')),
-            )
-            if not session.agree_server_public_value(initial.get('public_data')):
+            session.configure(identifier, password, salt)
+            if not session.agree_server_public_value(public_data):
                 raise ApiError('Invalid SRP server public value')
 
             sio.emit(
@@ -115,34 +182,35 @@ class GrpcLoginClient(object):
                 },
                 namespace=namespace,
             )
-            for _ in range(60):
-                if 'final' in events or 'error' in events:
-                    break
-                sio.sleep(0.5)
+            self._wait(sio, events, ('final', 'error'))
             self._raise_if_error(events.get('error'))
             final = events.get('final')
             if not final:
-                raise ApiError('SRP login timed out waiting for proof')
+                raise ApiError(self._timeout_message(
+                    'proof', events, firebase_token=firebase_token,
+                ))
 
-            if not session.validate_server_proof(final.get('proof')):
+            if not session.validate_server_proof(
+                bytes_field(_first(final, 'proof'))
+            ):
                 LOGGER.warning('SRP server proof did not validate; continuing')
 
-            credentials = dict(final.get('credentials') or {})
+            credentials = dict(
+                _first(final, 'credentials') or {}
+            )
             token = credentials.get('token')
-            session_salt = final.get('sessionSalt') or final.get('session_salt')
+            session_salt = _first(final, 'sessionSalt', 'session_salt')
             if token and session_salt:
-                key = session.get_salted_secret_key(_unb64(session_salt))
+                key = session.get_salted_secret_key(bytes_field(session_salt))
                 cryptor = SodiumSecretCryptor(key)
                 try:
-                    credentials['token'] = cryptor.decrypt(_unb64(token))
+                    credentials['token'] = cryptor.decrypt(bytes_field(token))
                 except Exception:
                     LOGGER.debug('DeviceToken unwrap failed; using raw token')
 
             return {
                 'credentials': credentials,
-                'bulk_account': (
-                    final.get('bulk_account') or final.get('bulkAccount')
-                ),
+                'bulk_account': _first(final, 'bulk_account', 'bulkAccount'),
                 'device': final.get('device'),
             }
         finally:
@@ -152,15 +220,64 @@ class GrpcLoginClient(object):
                 pass
 
     @staticmethod
+    def _wait(sio, events, keys, timeout=20.0):
+        steps = max(int(timeout / 0.25), 1)
+        for _ in range(steps):
+            if any(key in events for key in keys):
+                return
+            if events.get('disconnected'):
+                return
+            sio.sleep(0.25)
+
+    @staticmethod
+    def _timeout_message(stage, events, firebase_token=None):
+        bits = ['SRP login timed out waiting for {}'.format(stage)]
+        if events.get('disconnected'):
+            bits.append('socket closed before the server replied')
+        if firebase_token:
+            bits.append('re-run: termius login --google')
+        return '; '.join(bits)
+
+    @staticmethod
     def _raise_if_error(error):
         if not error:
             return
-        if isinstance(error, dict):
-            code = error.get('code')
-            message = error.get('message') or error.get('details') or str(error)
-            if code == NOT_MIGRATED:
-                raise NotMigratedError(message)
-            if code in (OTP_TOKEN_REQUIRED, OTP_TOKEN_ERROR):
-                raise OtpTokenRequired(message)
-            raise ApiError(message, payload=error)
-        raise ApiError(str(error))
+        if not isinstance(error, dict):
+            raise ApiError(str(error))
+        code = error.get('code')
+        key = error.get('key') or ''
+        message = (
+            error.get('message') or error.get('details') or str(error)
+        )
+        if code == NOT_MIGRATED or key == 'NOT_MIGRATED':
+            raise NotMigratedError(message)
+        if code in (OTP_TOKEN_REQUIRED, OTP_TOKEN_ERROR) or key in (
+            'OTP_TOKEN_REQUIRED', 'OTP_TOKEN_ERROR',
+        ):
+            raise OtpTokenRequired(message)
+        if code == UNAUTHENTICATED or key == 'UNAUTHENTICATED':
+            raise ApiError(
+                'Firebase session expired or invalid. '
+                'Run: termius login --google',
+                payload=error,
+            )
+        if code == APP_OUTDATED or key == 'APP_OUTDATED':
+            raise ApiError(
+                'Termius Cloud rejected this client version. '
+                'Upgrade termius-cli.',
+                payload=error,
+            )
+        if code == THROTTLED or key == 'THROTTLED':
+            raise ApiError(
+                'Termius login is throttled. Wait and retry.',
+                payload=error,
+            )
+        if code == LOGIN_APPROVE_REQUIRED or key == 'LOGIN_APPROVE_REQUIRED':
+            raise ApiError(
+                'This login needs approval in the Termius app.',
+                payload=error,
+            )
+        label = key or code
+        if label not in (None, ''):
+            message = '{} [{}]'.format(message, label)
+        raise ApiError(message, payload=error)

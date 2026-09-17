@@ -4,7 +4,7 @@ from unittest import TestCase
 from nose.tools import eq_, assert_raises
 
 from termius.cloud.client.browser_sso import (
-    parse_continue_sso_url, parse_google_callback,
+    desktop_sso_url, parse_continue_sso_url, parse_google_callback,
 )
 from termius.core.exceptions import ApiError
 
@@ -51,3 +51,12 @@ class ParseGoogleCallbackTest(TestCase):
 
     def test_not_google(self):
         eq_(parse_google_callback('https://example.com/'), None)
+
+
+class DesktopSsoUrlTest(TestCase):
+    def test_builds_account_url(self):
+        url = desktop_sso_url('google', 'abc-123')
+        eq_(
+            url,
+            'https://account.termius.com/sso/desktop?provider=google&request=abc-123',
+        )

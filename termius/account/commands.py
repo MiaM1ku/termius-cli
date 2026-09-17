@@ -8,7 +8,7 @@ from ..core.signals import post_logout
 from ..core.commands.arg_types import boolean_yes_no
 from ..core.exceptions import OptionNotSetException
 from ..core.api import AuthyTokenIssue
-from ..core.exceptions import OtpTokenRequired
+from ..core.exceptions import ApiError, OtpTokenRequired
 from .managers import AccountManager
 
 
@@ -46,7 +46,7 @@ class LoginCommand(BaseAccountCommand):
         parser.add_argument('-p', '--password', metavar='PASSWORD')
         parser.add_argument(
             '--google', action='store_true',
-            help='sign in with Google in a browser, then enter the encryption password',
+            help='Google SSO: print account.termius.com/sso/desktop, paste termius:// callback',
         )
         parser.add_argument(
             '--sso', choices=('google',),
@@ -54,11 +54,11 @@ class LoginCommand(BaseAccountCommand):
         )
         parser.add_argument(
             '--callback-url',
-            help='http://127.0.0.1 callback URL (with #id_token=) if the browser is elsewhere',
+            help='termius://app/continue-sso?... URL (non-interactive)',
         )
         parser.add_argument(
             '--no-browser', action='store_true',
-            help='print the Google URL only; do not open a local browser',
+            help='ignored; the CLI never opens a browser',
         )
         return parser
 
@@ -71,19 +71,37 @@ class LoginCommand(BaseAccountCommand):
         callback_url = getattr(parsed_args, 'callback_url', None)
         if provider:
             self.log.info(
-                'Google only proves who you are. After the browser returns, '
+                'Google only proves who you are. After pasting the callback, '
                 'Termius still needs the encryption password to unlock the vault.'
             )
             with on_clean_when_logout(self, self.manager):
-                identity = self.manager.prepare_sso(
-                    provider=provider,
-                    callback_url=callback_url,
-                    log=self.log,
-                    open_browser=not getattr(parsed_args, 'no_browser', False),
+                try:
+                    identity = self.manager.prepare_sso(
+                        provider=provider,
+                        callback_url=callback_url,
+                        log=self.log,
+                        open_browser=False,
+                    )
+                except Exception as exc:
+                    raise SystemExit(
+                        'Google SSO failed ({}): {}'.format(
+                            type(exc).__name__, exc
+                        )
+                    )
+                self.log.info(
+                    'Google identity: %s (%s)',
+                    identity['email'], identity.get('action') or 'sign-in',
+                )
+                self.log.info(
+                    'Enter the Termius encryption password to finish login.'
                 )
                 password = (
                     parsed_args.password or self.prompt_encryption_password()
                 )
+                if not password:
+                    raise SystemExit(
+                        'Encryption password is required after Google sign-in.'
+                    )
                 try:
                     self.manager.login(
                         identity['email'], password,
@@ -96,6 +114,10 @@ class LoginCommand(BaseAccountCommand):
                         authy_token=authy_token,
                         firebase_token=identity['firebase_token'],
                     )
+                except ApiError as exc:
+                    raise SystemExit('Login failed: {}'.format(exc))
+            self.log.info('\nSigned in as %s', identity['email'])
+            return None
         else:
             username = parsed_args.username or self.prompt_username()
             password = parsed_args.password or self.prompt_password()
@@ -105,7 +127,10 @@ class LoginCommand(BaseAccountCommand):
                 except (AuthyTokenIssue, OtpTokenRequired):
                     authy_token = self.prompt_authy_token()
                     self.manager.login(username, password, authy_token=authy_token)
+                except ApiError as exc:
+                    raise SystemExit('Login failed: {}'.format(exc))
         self.log.info('\nSigned in successfully')
+        return None
 
 
 class LogoutCommand(BaseAccountCommand):

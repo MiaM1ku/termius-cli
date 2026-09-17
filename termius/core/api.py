@@ -143,8 +143,17 @@ class API(object):
             headers=self._headers(),
             timeout=self.timeout,
         )
-        self.__check_response(response, (200,))
-        return response.json()
+        if not (200 <= response.status_code < 300):
+            raise ApiError(
+                'detect_action HTTP {}: {}'.format(
+                    response.status_code, (response.text or '')[:300]
+                ),
+                status=response.status_code,
+            )
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ApiError('detect_action returned a non-object')
+        return data
 
     @staticmethod
     def _extract_token(payload):
@@ -170,7 +179,11 @@ class API(object):
             if code in (3, 10):
                 raise OtpTokenRequired(response.text)
         if response.status_code != 200:
-            self.logger.warning('Can not login! status=%s', response.status_code)
+            self.logger.warning(
+                'REST login failed status=%s body=%s',
+                response.status_code,
+                (response.text or '')[:200],
+            )
         self.__check_response(response, (200,))
 
     def __check_response(self, response, success_statuses=None):

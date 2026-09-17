@@ -29,7 +29,7 @@ use a venv as above, or `pipx install -e .`.
 ```bash
 termius init                         # login, pull, import ssh config, push
 termius login -u you@example.com
-termius login --google               # Google in the browser, then encryption password
+termius login --google               # print SSO URL, paste termius:// callback
 termius pull
 termius hosts
 termius info myhost
@@ -98,17 +98,22 @@ Google / SSO accounts:
 termius login --google
 ```
 
-This opens a normal Google sign-in page. Google then redirects to
-`http://127.0.0.1:<port>/callback#id_token=...` (visible in the address bar).
-On this machine the CLI captures that automatically. If the browser is on
-another device, paste that `http://127.0.0.1...` URL:
+The CLI **does not open a browser**. It prints:
+
+`https://account.termius.com/sso/desktop?provider=google&request=<uuid>`
+
+Open that on any device, sign in with Google, then paste
+`termius://app/continue-sso?email=...&firebaseToken=...&requestId=...`.
 
 ```bash
-termius login --google --callback-url 'http://127.0.0.1:PORT/callback#id_token=...'
+termius login --google --callback-url 'termius://app/continue-sso?email=...&firebaseToken=...&requestId=...'
 ```
 
-`--no-browser` prints the Google URL without opening it. Google only proves
-identity; Termius still needs the **encryption password** to unwrap the vault.
+Google only proves identity. Termius then asks for the **vault encryption
+password** (the one you set in the Termius app, not your Google password).
+The Firebase callback is valid for about an hour; if login says the session
+expired, run `termius login --google` again. Do not use `w3m`/`lynx` — they
+steal the TTY and cannot show the `termius://` handoff.
 
 ## Encryption notes
 
@@ -117,7 +122,9 @@ Termius Cloud currently has two personal encryption schemas:
 - **v3** — per-field RNCryptor (AES-CBC + HMAC). REST login is enough.
 - **v5** — entity `content` blobs sealed with Argon2id + XChaCha20-Poly1305, plus SRP login.
 
-The CLI auto-detects ciphertext version (`A…` = v3, `B…` = v5) and tries SRP login first, then REST.
+The CLI auto-detects ciphertext version (`A…` = v3, `B…` = v5). Login uses
+gRPC/SRP first (desktop `login_v2`); REST is only the fallback for accounts
+that are not migrated (`NOT_MIGRATED`).
 
 Team vaults: `termius pull` loads `/api/v4/team/vault/keys/`, unwraps each `encrypted_with` key with the personal X25519 keypair (ECDH + HChaCha20 + XChaCha20-Poly1305), and decrypts shared hosts/keys/identities. Entities whose vault key is missing are skipped, not deleted.
 
