@@ -33,6 +33,7 @@ class AccountManager(object):
                 login_email, password, device,
                 authy_token=authy_token,
                 firebase_token=firebase_token,
+                account_email=username,
             )
         except (AuthyTokenIssue, OtpTokenRequired):
             raise

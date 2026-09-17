@@ -96,7 +96,8 @@ class GrpcLoginClient(object):
         self.url = 'https://{}'.format(host)
 
     def login(self, email, password, device, authy_token=None,
-              firebase_token=None, domain_sso_token=None):
+              firebase_token=None, domain_sso_token=None,
+              account_email=None):
         """Run the SRP login handshake and return the desktop-shaped payload."""
         try:
             import socketio
@@ -175,9 +176,23 @@ class GrpcLoginClient(object):
                     'salt', events, firebase_token=firebase_token,
                 ))
 
-            identifier = _first(initial, 'identifier') or email
+            identifier = (
+                _first(initial, 'identifier', 'Identifier')
+                or account_email
+                or email
+            )
             salt = bytes_field(_first(initial, 'salt'))
             public_data = _first(initial, 'publicData', 'public_data')
+            events['srp_meta'] = {
+                'keys': sorted(initial.keys()) if isinstance(initial, dict) else str(type(initial)),
+                'identifier_len': len(identifier or ''),
+                'identifier_source': (
+                    'server' if _first(initial, 'identifier', 'Identifier')
+                    else 'account_email' if account_email else 'email'
+                ),
+                'salt_len': len(salt or b''),
+                'public_prefix': str(public_data)[:4] if public_data else '',
+            }
             LOGGER.debug(
                 'SRP initial field types=%s',
                 {k: type(v).__name__ for k, v in initial.items()},
@@ -201,7 +216,9 @@ class GrpcLoginClient(object):
                 namespace=namespace,
             )
             self._wait(sio, events, ('final', 'error'))
-            self._raise_if_error(events.get('error'))
+            self._raise_if_error(
+                events.get('error'), meta=events.get('srp_meta'),
+            )
             final = events.get('final')
             if not final:
                 raise ApiError(self._timeout_message(
@@ -265,7 +282,7 @@ class GrpcLoginClient(object):
         return '; '.join(bits)
 
     @staticmethod
-    def _raise_if_error(error):
+    def _raise_if_error(error, meta=None):
         if not error:
             return
         if not isinstance(error, dict):
@@ -305,7 +322,9 @@ class GrpcLoginClient(object):
             )
         if code == INVALID_PROOF or key == 'INVALID_PROOF':
             raise ApiError(
-                'Wrong encryption password (SRP proof rejected).',
+                'SRP proof rejected (not 2FA — that would ask for an '
+                'authenticator code). Vault password is used, but the CLI '
+                'proof still does not match the app. meta={}'.format(meta),
                 payload=error,
             )
         if code == INVALID_PUBLIC_DATA or key == 'INVALID_PUBLIC_DATA':

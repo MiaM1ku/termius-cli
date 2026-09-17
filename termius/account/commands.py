@@ -60,6 +60,10 @@ class LoginCommand(BaseAccountCommand):
             '--no-browser', action='store_true',
             help='ignored; the CLI never opens a browser',
         )
+        parser.add_argument(
+            '--otp', metavar='CODE',
+            help='authenticator / Authy code if the account has 2FA',
+        )
         return parser
 
     def take_action(self, parsed_args):
@@ -105,10 +109,11 @@ class LoginCommand(BaseAccountCommand):
                 try:
                     self.manager.login(
                         identity['email'], password,
+                        authy_token=getattr(parsed_args, 'otp', None),
                         firebase_token=identity['firebase_token'],
                     )
                 except (AuthyTokenIssue, OtpTokenRequired):
-                    authy_token = self.prompt_authy_token()
+                    authy_token = parsed_args.otp or self.prompt_authy_token()
                     self.manager.login(
                         identity['email'], password,
                         authy_token=authy_token,
@@ -123,9 +128,12 @@ class LoginCommand(BaseAccountCommand):
             password = parsed_args.password or self.prompt_password()
             with on_clean_when_logout(self, self.manager):
                 try:
-                    self.manager.login(username, password)
+                    self.manager.login(
+                        username, password,
+                        authy_token=getattr(parsed_args, 'otp', None),
+                    )
                 except (AuthyTokenIssue, OtpTokenRequired):
-                    authy_token = self.prompt_authy_token()
+                    authy_token = parsed_args.otp or self.prompt_authy_token()
                     self.manager.login(username, password, authy_token=authy_token)
                 except ApiError as exc:
                     raise SystemExit('Login failed: {}'.format(exc))
