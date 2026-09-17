@@ -107,6 +107,7 @@ class GrpcLoginClient(object):
 
         sio = socketio.Client(
             reconnection=False, logger=False, handle_sigint=False,
+            request_timeout=120,
         )
         events = {}
         namespace = LOGIN_NAMESPACE
@@ -150,6 +151,12 @@ class GrpcLoginClient(object):
             eio = getattr(sio, 'eio', None)
             if eio is not None:
                 eio.ping_timeout = 120
+                ws = getattr(eio, 'ws', None)
+                if ws is not None:
+                    # websocket-client recv timeout. Browsers wait forever;
+                    # Python defaults to pingInterval+pingTimeout (~45s) and
+                    # aborts with "transport error" while the server is busy.
+                    ws.settimeout(180)
             sio.emit(
                 'initialRequest',
                 build_initial_request(
