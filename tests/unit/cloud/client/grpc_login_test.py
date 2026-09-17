@@ -7,7 +7,7 @@ from termius.cloud.client.grpc_login import (
 )
 from termius.cloud.client.srp_session import (
     G, N, P_BYTES, ClientSession, _blake2b, _minimal, botan_bigint_from_str,
-    botan_bigint_to_str,
+    botan_bigint_to_str, botan_bigint_to_wire,
 )
 from termius.core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 
@@ -89,6 +89,11 @@ class BotanBigIntTest(TestCase):
         self.assertEqual(botan_bigint_to_str(10), '0x0A')
         self.assertEqual(botan_bigint_to_str(0xAB), '0xAB')
         self.assertEqual(botan_bigint_to_str(b'\x01\x02'), '0x0102')
+
+    def test_wire_hex_strips_0x(self):
+        self.assertEqual(botan_bigint_to_wire(10), '0A')
+        self.assertEqual(botan_bigint_to_wire(0xAB), 'AB')
+        self.assertFalse(botan_bigint_to_wire(0xDEADBEEF).startswith('0x'))
 
     def test_parse_0x(self):
         self.assertEqual(botan_bigint_from_str('0x0A'), 10)

@@ -102,7 +102,7 @@ def _H(*parts):
 
 
 def botan_bigint_to_str(value):
-    """Match libtermius ``BigInt`` UTF-8: ``0x`` + uppercase hex."""
+    """Botan ``BigInt::to_hex_string``: ``0x`` + uppercase hex."""
     if isinstance(value, bytes):
         value = _bytes_to_int(value)
     if not isinstance(value, int):
@@ -115,6 +115,23 @@ def botan_bigint_to_str(value):
     if len(hexstr) % 2:
         hexstr = '0' + hexstr
     return '0x' + hexstr
+
+
+def botan_bigint_to_wire(value):
+    """Android libtermius wire format: uppercase hex, no ``0x`` prefix.
+
+    ``GetPublicValue`` / ``GenerateProof`` call ``to_hex_string`` then strip
+    a leading ``0x``. The server's ``publicData`` is the same (2048 hex chars).
+    """
+    text = botan_bigint_to_str(value)
+    if text.startswith('-'):
+        body = text[1:]
+        if body.startswith('0x') or body.startswith('0X'):
+            body = body[2:]
+        return '-' + body
+    if text.startswith('0x') or text.startswith('0X'):
+        return text[2:]
+    return text
 
 
 def botan_bigint_from_str(value):

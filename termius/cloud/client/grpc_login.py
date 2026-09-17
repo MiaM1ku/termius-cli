@@ -9,7 +9,7 @@ from ...core.constants import (
 )
 from ...core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 from .sodium import SodiumSecretCryptor
-from .srp_session import ClientSession, botan_bigint_to_str
+from .srp_session import ClientSession, botan_bigint_to_wire
 
 LOGGER = logging.getLogger(__name__)
 
@@ -237,8 +237,8 @@ class GrpcLoginClient(object):
             sio.emit(
                 'finalRequest',
                 {
-                    'public_data': botan_bigint_to_str(session.A),
-                    'proof': botan_bigint_to_str(session.generate_proof()),
+                    'public_data': botan_bigint_to_wire(session.A),
+                    'proof': botan_bigint_to_wire(session.generate_proof()),
                 },
                 namespace=namespace,
             )
