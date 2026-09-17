@@ -172,7 +172,10 @@ class BulkEntryTransformer(GetPrimaryKeyTransformerMixin,
     def render_relation_field(self, mapping, value):
         """Convert relation mapping and value to whole model."""
         transformer = self.get_primary_key_transformer(mapping.model)
-        return transformer.to_model(value)
+        try:
+            return transformer.to_model(value)
+        except DoesNotExistException:
+            return None
 
     def initialize_model(self):
         """Generate new model using payload."""

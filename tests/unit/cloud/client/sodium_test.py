@@ -52,3 +52,9 @@ class SodiumCryptorTest(TestCase):
         encoded = unified.encrypt('payload', schema='v5')
         self.assertTrue(encoded.startswith('B') or encoded[0] in 'ABC')
         self.assertEqual(unified.decrypt(encoded), 'payload')
+
+    def test_plaintext_labels_are_not_ciphertext(self):
+        unified = UnifiedCryptor('secret', urandom(8), urandom(8))
+        for text in ('Main', 'root', 'AliCDT', '10.0.6.40', 'ssh-rsa AAAAB3'):
+            self.assertEqual(unified._detect_version(text), 0)
+            self.assertEqual(unified.decrypt(text), text)

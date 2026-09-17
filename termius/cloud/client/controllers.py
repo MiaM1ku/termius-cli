@@ -5,6 +5,7 @@ from .transformers.many import BulkTransformer
 from .transformers.single import SettingsTransformer
 from ...core.api import API
 from ...account.managers import AccountManager
+from ...core.exceptions import ApiError
 
 
 class CryptoController(object):
@@ -113,7 +114,7 @@ class ApiController(object):
         try:
             mapped = self.mapping['bulk']
             model = self._get(mapped)
-        except Exception:
+        except ApiError:
             mapped = self.mapping['bulk_legacy']
             model = self._get(mapped)
         self.config.set('CloudSynchronization', 'last_synced',

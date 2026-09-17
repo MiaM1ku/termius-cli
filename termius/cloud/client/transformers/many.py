@@ -168,6 +168,8 @@ class BulkTransformer(CryptoChildTransformerCreatorMixin,
                 continue
             except DeletBadEncrypted as exception:
                 bad_encrypted_models.append(exception.model)
+            except DoesNotExistException:
+                continue
             else:
                 models.append(child_model)
         return models, bad_encrypted_models

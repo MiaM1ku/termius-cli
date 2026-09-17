@@ -321,14 +321,19 @@ class UnifiedCryptor(object):
     def _detect_version(data):
         if not data:
             return 0
-        if data[0] == 'B':
-            return 4
-        if data[0] == 'A':
-            return 3
+        if not isinstance(data, str):
+            return 0
+        # Termius wire blobs are long base64 and start with A (v3) or B (v4).
+        # Short plaintext like "Main"/"root"/"AliCDT" must not be sniffed:
+        # b64decode("Main") succeeds and yields a random first byte.
+        if data[0] not in ('A', 'B') or len(data) < 56:
+            return 0
         try:
             raw = base64.b64decode(to_bytes(data))
         except (TypeError, binascii.Error, ValueError):
             return 0
-        if not raw:
+        if not raw or len(raw) < 42:
             return 0
-        return raw[0]
+        if raw[0] in (3, 4):
+            return 4 if raw[0] == 4 else 3
+        return 0
