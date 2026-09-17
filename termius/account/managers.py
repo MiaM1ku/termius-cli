@@ -104,7 +104,7 @@ class AccountManager(object):
         """Browser SSO, then encryption-password login."""
         identity = self.prepare_sso(
             provider=provider, callback_url=callback_url, log=log,
-            open_browser=False,
+            open_browser=True,
         )
         return self.login(
             identity['email'], password, authy_token=authy_token,
@@ -112,7 +112,7 @@ class AccountManager(object):
         )
 
     def prepare_sso(self, provider='google', callback_url=None, log=None,
-                    open_browser=False):
+                    open_browser=True):
         """Run browser Google/Apple SSO and detect the Termius account."""
         sso = BrowserSso(
             provider=provider, open_browser=open_browser, log=log

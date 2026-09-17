@@ -29,7 +29,7 @@ use a venv as above, or `pipx install -e .`.
 ```bash
 termius init                         # login, pull, import ssh config, push
 termius login -u you@example.com
-termius login --google               # print SSO URL, paste callback, then encryption password
+termius login --google               # Google in the browser, then encryption password
 termius pull
 termius hosts
 termius info myhost
@@ -98,15 +98,17 @@ Google / SSO accounts:
 termius login --google
 ```
 
-The CLI prints an `account.termius.com/sso/desktop` URL. Open it on **any** device, sign in with Google, then paste the `termius://app/continue-sso?...` callback. Google only proves identity; Termius still needs the **encryption password** to unwrap the vault.
-
-Non-interactive paste (SSH from another machine, no TTY prompts for the URL):
+This opens a normal Google sign-in page. Google then redirects to
+`http://127.0.0.1:<port>/callback#id_token=...` (visible in the address bar).
+On this machine the CLI captures that automatically. If the browser is on
+another device, paste that `http://127.0.0.1...` URL:
 
 ```bash
-termius login --google --callback-url 'termius://app/continue-sso?email=...&firebaseToken=...&requestId=...'
+termius login --google --callback-url 'http://127.0.0.1:PORT/callback#id_token=...'
 ```
 
-`--open-browser` also tries a local browser. It is optional and not required for remote sessions.
+`--no-browser` prints the Google URL without opening it. Google only proves
+identity; Termius still needs the **encryption password** to unwrap the vault.
 
 ## Encryption notes
 

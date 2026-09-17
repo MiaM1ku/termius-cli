@@ -10,3 +10,11 @@ WS_BASE_URL = 'wss://{}'.format(API_HOST)
 SOCKETIO_GRPC_PATH = '/socket.io/grpc-proxy'
 LOGIN_NAMESPACE = '/login_v2'
 SSO_DESKTOP_URL = 'https://account.termius.com/sso/desktop'
+FIREBASE_API_KEY = 'AIzaSyBFnPuANmLK2HzicAwuuDffSjRcW1FGDCU'
+FIREBASE_AUTH_REFERER = 'https://account.termius.com/'
+FIREBASE_CREATE_AUTH_URI = (
+    'https://www.googleapis.com/identitytoolkit/v3/relyingparty/createAuthUri'
+)
+FIREBASE_SIGN_IN_WITH_IDP = (
+    'https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp'
+)

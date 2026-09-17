@@ -46,7 +46,7 @@ class LoginCommand(BaseAccountCommand):
         parser.add_argument('-p', '--password', metavar='PASSWORD')
         parser.add_argument(
             '--google', action='store_true',
-            help='Google SSO: print a URL, paste the termius:// callback, then encryption password',
+            help='sign in with Google in a browser, then enter the encryption password',
         )
         parser.add_argument(
             '--sso', choices=('google',),
@@ -54,11 +54,11 @@ class LoginCommand(BaseAccountCommand):
         )
         parser.add_argument(
             '--callback-url',
-            help='paste the termius://app/continue-sso?... URL non-interactively',
+            help='http://127.0.0.1 callback URL (with #id_token=) if the browser is elsewhere',
         )
         parser.add_argument(
-            '--open-browser', action='store_true',
-            help='also try to open the SSO URL in a local browser',
+            '--no-browser', action='store_true',
+            help='print the Google URL only; do not open a local browser',
         )
         return parser
 
@@ -71,7 +71,7 @@ class LoginCommand(BaseAccountCommand):
         callback_url = getattr(parsed_args, 'callback_url', None)
         if provider:
             self.log.info(
-                'Google only proves who you are. After pasting the callback, '
+                'Google only proves who you are. After the browser returns, '
                 'Termius still needs the encryption password to unlock the vault.'
             )
             with on_clean_when_logout(self, self.manager):
@@ -79,7 +79,7 @@ class LoginCommand(BaseAccountCommand):
                     provider=provider,
                     callback_url=callback_url,
                     log=self.log,
-                    open_browser=getattr(parsed_args, 'open_browser', False),
+                    open_browser=not getattr(parsed_args, 'no_browser', False),
                 )
                 password = (
                     parsed_args.password or self.prompt_encryption_password()
