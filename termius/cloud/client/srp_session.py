@@ -67,18 +67,32 @@ def _bytes_to_int(data):
 
 def _blake2b(*parts):
     """Unkeyed Blake2b-512, Botan ``HashFunction::create("Blake2b")``."""
-    digest = hashlib.blake2b()
+    digest = hashlib.blake2b(digest_size=64)
     for part in parts:
         digest.update(_to_bytes(part))
     return digest.digest()
 
 
-def _pad(value):
-    """Left-pad an integer to the byte length of N."""
-    return _int_to_bytes(value % N, (N.bit_length() + 7) // 8)
-
-
 P_BYTES = (N.bit_length() + 7) // 8
+A_BITS = 512
+
+
+def _pad(value):
+    """IEEE 1363 ``encode_1363`` to |N| bytes.
+
+    Botan ``hash_seq`` / ``SymmetricKey`` pad A, B, g, S, and N this way.
+    Do **not** reduce modulo N first: ``N % N`` is 0, so ``k = H(N, g)``
+    would hash 1024 zero bytes instead of the 8192-bit modulus and every
+    SRP proof would be rejected.
+    """
+    if isinstance(value, bytes):
+        value = _bytes_to_int(value)
+    if value < 0:
+        raise ValueError('cannot pad a negative integer')
+    try:
+        return value.to_bytes(P_BYTES, 'big')
+    except OverflowError:
+        return (value % N).to_bytes(P_BYTES, 'big')
 
 
 def _minimal(value):
@@ -198,8 +212,11 @@ class ClientSession(object):
         except (TypeError, ValueError):
             version = 1
         self.version = 1 if version == 1 else version
+        if isinstance(password, str):
+            password = password.strip('\r\n')
         self.password = _to_bytes(hash_srp_password(password, self.salt))
-        self.a = _bytes_to_int(os.urandom(32)) % (N - 1) + 1
+        # Botan ``dl_exponent_size(8192)`` is 512 bits.
+        self.a = _bytes_to_int(os.urandom(A_BITS // 8)) % (N - 1) + 1
         self.A = pow(G, self.a, N)
         inner = _blake2b(self.identifier, b':', self.password)
         self.x = _bytes_to_int(_blake2b(self.salt, inner))

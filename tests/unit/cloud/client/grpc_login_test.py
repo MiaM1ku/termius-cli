@@ -6,8 +6,8 @@ from termius.cloud.client.grpc_login import (
     omit_none,
 )
 from termius.cloud.client.srp_session import (
-    G, N, P_BYTES, ClientSession, _blake2b, _minimal, botan_bigint_from_str,
-    botan_bigint_to_str, botan_bigint_to_wire,
+    G, N, P_BYTES, ClientSession, _H, _blake2b, _minimal, _pad,
+    botan_bigint_from_str, botan_bigint_to_str, botan_bigint_to_wire,
 )
 from termius.core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 
@@ -122,6 +122,22 @@ class SrpEncodingTest(TestCase):
     def test_srp_hash_is_blake2b_512(self):
         digest = _blake2b(b'abc')
         self.assertEqual(len(digest), 64)
+        self.assertEqual(
+            digest.hex(),
+            'ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1'
+            '7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923',
+        )
+
+    def test_pad_n_is_the_modulus_not_zero(self):
+        padded = _pad(N)
+        self.assertEqual(len(padded), P_BYTES)
+        self.assertEqual(padded, _minimal(N))
+        self.assertNotEqual(padded, b'\x00' * P_BYTES)
+
+    def test_k_uses_real_modulus(self):
+        k_wrong = _blake2b(b'\x00' * P_BYTES, _pad(G))
+        k = _H(N, G)
+        self.assertNotEqual(k, int.from_bytes(k_wrong, 'big'))
 
 
 class SrpPasswordHashTest(TestCase):
