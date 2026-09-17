@@ -1,3 +1,3 @@
 # -*- coding: utf-8 -*-
 """Package with CLI tool and API."""
-__version__ = '2.0.6'
+__version__ = '2.0.7'

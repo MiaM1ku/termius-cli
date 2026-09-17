@@ -296,6 +296,27 @@ class UnifiedCryptor(object):
             except Exception:
                 raise CryptorException('Can not decrypt cipher text!')
 
+    def decrypt_bytes(self, data):
+        """Decrypt key material to raw bytes (not latin1 text)."""
+        if data is None or data == '':
+            return data
+        if isinstance(data, (bytes, bytearray)):
+            raw = bytes(data)
+            if raw and raw[0] in (3, 4) and len(raw) >= 42:
+                return self.sodium.decrypt_bytes(raw)
+            return raw
+        version = self._detect_version(data)
+        if version == 4:
+            raw = base64.b64decode(to_bytes(data))
+            return self.sodium.decrypt_bytes(raw)
+        text = self.decrypt(data)
+        if isinstance(text, str):
+            try:
+                return text.encode('ascii')
+            except UnicodeEncodeError:
+                return text.encode('latin1')
+        return text
+
     @staticmethod
     def _detect_version(data):
         if not data:

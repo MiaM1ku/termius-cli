@@ -28,6 +28,40 @@ def _b64d(text):
     return base64.b64decode(text)
 
 
+def _as_key_bytes(value):
+    """Accept a 32-byte key as raw bytes, latin1, or standard base64.
+
+    Desktop password-decrypts ``encrypted_private_key`` to raw 32 bytes
+    then ``toString('base64')``. Our ``decrypt()`` yields those raw bytes
+    as a latin1 string, which ``b64decode`` rejects with
+    ``string argument should contain only ASCII characters``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        raw = bytes(value)
+        if len(raw) == KEY_SIZE:
+            return raw
+        try:
+            decoded = base64.b64decode(raw)
+        except Exception:
+            return raw
+        return decoded if len(decoded) == KEY_SIZE else raw
+    try:
+        ascii_bytes = value.encode('ascii')
+    except UnicodeEncodeError:
+        return value.encode('latin1')
+    try:
+        decoded = base64.b64decode(ascii_bytes)
+    except Exception:
+        return ascii_bytes
+    if len(decoded) == KEY_SIZE:
+        return decoded
+    if len(ascii_bytes) == KEY_SIZE:
+        return ascii_bytes
+    return decoded
+
+
 def _as_list(payload):
     if payload is None:
         return []
@@ -90,9 +124,17 @@ class VaultKeyRing(object):
         enc_personal = personal_keyset.get('encrypted_personal_key')
         if not enc_priv or not public_b64:
             return
-        private_b64 = password_cryptor.decrypt(enc_priv)
-        private_key = _b64d(private_b64)
-        public_key = _b64d(public_b64)
+        decrypt_bytes = getattr(password_cryptor, 'decrypt_bytes', None)
+        private_plain = None
+        if decrypt_bytes:
+            try:
+                private_plain = decrypt_bytes(enc_priv)
+            except Exception:
+                private_plain = None
+        if private_plain is None:
+            private_plain = password_cryptor.decrypt(enc_priv)
+        private_key = _as_key_bytes(private_plain)
+        public_key = _as_key_bytes(public_b64)
         if len(private_key) != KEY_SIZE or len(public_key) != KEY_SIZE:
             raise CryptorException('personal keypair has unexpected size')
         self.private_key = private_key
