@@ -77,6 +77,18 @@ def _pad(value):
     return _int_to_bytes(value % N, (N.bit_length() + 7) // 8)
 
 
+P_BYTES = (N.bit_length() + 7) // 8
+
+
+def _minimal(value):
+    """Botan ``BigInt`` serialize: no leading zero bytes."""
+    if isinstance(value, bytes):
+        value = _bytes_to_int(value)
+    if value == 0:
+        return b'\x00'
+    return _int_to_bytes(value)
+
+
 def _H(*parts):
     """Hash concatenated parts; integers are padded to |N|."""
     blobs = []
@@ -149,6 +161,7 @@ class ClientSession(object):
         self.x = None
         self.S = None
         self.K = None
+        self.session_key = None
         self.M1 = None
         self.M2 = None
 
@@ -183,10 +196,33 @@ class ClientSession(object):
             self.a + self.u * self.x,
             N,
         )
-        self.K = _sha256(_int_to_bytes(self.S))
-        self.M1 = _sha256(_int_to_bytes(self.A), _int_to_bytes(self.B), self.K)
-        self.M2 = _sha256(_int_to_bytes(self.A), self.M1, self.K)
+        # Botan SymmetricKey is S encoded to |N| bytes, not SHA-256(S).
+        self.session_key = _pad(self.S)
+        self.K = self.session_key
+        self.M1 = self._client_proof()
+        self.M2 = _sha256(_minimal(self.A), self.M1, self.K)
         return True
+
+    def _client_proof(self):
+        """libtermius generateProof: RFC 2945 with unpadded BigInt bytes.
+
+        M = H(H(N) xor H(g) | H(I) | s | A | B | H(K))
+        where H(N)/H(g)/A/B use Botan minimal serialization (g is 0x13),
+        and K is S padded to |N|.
+        """
+        h_n = _sha256(_minimal(N))
+        h_g = _sha256(_minimal(G))
+        xor_ng = bytes(a ^ b for a, b in zip(h_n, h_g))
+        h_i = _sha256(self.identifier)
+        h_k = _sha256(self.session_key)
+        return _sha256(
+            xor_ng,
+            h_i,
+            self.salt,
+            _minimal(self.A),
+            _minimal(self.B),
+            h_k,
+        )
 
     def get_public_value(self):
         return _int_to_bytes(self.A)

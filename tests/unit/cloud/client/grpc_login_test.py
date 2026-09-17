@@ -6,7 +6,7 @@ from termius.cloud.client.grpc_login import (
     omit_none,
 )
 from termius.cloud.client.srp_session import (
-    botan_bigint_from_str, botan_bigint_to_str,
+    G, N, P_BYTES, _minimal, botan_bigint_from_str, botan_bigint_to_str,
 )
 from termius.core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 
@@ -98,3 +98,12 @@ class BotanBigIntTest(TestCase):
         encoded = botan_bigint_to_str(value)
         self.assertTrue(encoded.startswith('0x'))
         self.assertEqual(botan_bigint_from_str(encoded), value)
+
+
+class SrpEncodingTest(TestCase):
+    def test_g_is_single_byte(self):
+        self.assertEqual(_minimal(G), b'\x13')
+
+    def test_n_is_group_size(self):
+        self.assertEqual(len(_minimal(N)), P_BYTES)
+        self.assertEqual(P_BYTES, 1024)
