@@ -1,7 +1,7 @@
 """Botan-compatible SRP-6a client used by Termius gRPC login.
 
 Termius 10 configures ``modp/srp/8192`` (RFC 5054 8192-bit group) with
-SHA-256, matching Botan ``SRP6_Client_Session``.
+**Blake2b-512** (Botan name ``Blake2b``), matching ``SRP6_Client_Session``.
 """
 from __future__ import unicode_literals
 
@@ -65,8 +65,9 @@ def _bytes_to_int(data):
     return int.from_bytes(data, 'big')
 
 
-def _sha256(*parts):
-    digest = hashlib.sha256()
+def _blake2b(*parts):
+    """Unkeyed Blake2b-512, Botan ``HashFunction::create("Blake2b")``."""
+    digest = hashlib.blake2b()
     for part in parts:
         digest.update(_to_bytes(part))
     return digest.digest()
@@ -97,7 +98,7 @@ def _H(*parts):
             blobs.append(_pad(part))
         else:
             blobs.append(_to_bytes(part))
-    return _bytes_to_int(_sha256(*blobs))
+    return _bytes_to_int(_blake2b(*blobs))
 
 
 def botan_bigint_to_str(value):
@@ -183,8 +184,8 @@ class ClientSession(object):
         self.password = _to_bytes(hash_srp_password(password, self.salt))
         self.a = _bytes_to_int(os.urandom(32)) % (N - 1) + 1
         self.A = pow(G, self.a, N)
-        inner = _sha256(self.identifier, b':', self.password)
-        self.x = _bytes_to_int(_sha256(self.salt, inner))
+        inner = _blake2b(self.identifier, b':', self.password)
+        self.x = _bytes_to_int(_blake2b(self.salt, inner))
         return self
 
     def generate_verifier(self):
@@ -212,22 +213,22 @@ class ClientSession(object):
         self.session_key = _pad(self.S)
         self.K = self.session_key
         self.M1 = self._client_proof()
-        self.M2 = _sha256(_minimal(self.A), self.M1, self.K)
+        self.M2 = _blake2b(_minimal(self.A), self.M1, self.K)
         return True
 
     def _client_proof(self):
         """libtermius generateProof: RFC 2945 with unpadded BigInt bytes.
 
         M = H(H(N) xor H(g) | H(I) | s | A | B | H(K))
-        where H(N)/H(g)/A/B use Botan minimal serialization (g is 0x13),
-        and K is S padded to |N|.
+        where H is Blake2b-512, H(N)/H(g)/A/B use Botan minimal
+        serialization (g is 0x13), and K is S padded to |N|.
         """
-        h_n = _sha256(_minimal(N))
-        h_g = _sha256(_minimal(G))
+        h_n = _blake2b(_minimal(N))
+        h_g = _blake2b(_minimal(G))
         xor_ng = bytes(a ^ b for a, b in zip(h_n, h_g))
-        h_i = _sha256(self.identifier)
-        h_k = _sha256(self.session_key)
-        return _sha256(
+        h_i = _blake2b(self.identifier)
+        h_k = _blake2b(self.session_key)
+        return _blake2b(
             xor_ng,
             h_i,
             self.salt,

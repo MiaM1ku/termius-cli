@@ -6,7 +6,7 @@ from termius.cloud.client.grpc_login import (
     omit_none,
 )
 from termius.cloud.client.srp_session import (
-    G, N, P_BYTES, ClientSession, _minimal, botan_bigint_from_str,
+    G, N, P_BYTES, ClientSession, _blake2b, _minimal, botan_bigint_from_str,
     botan_bigint_to_str,
 )
 from termius.core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
@@ -113,6 +113,10 @@ class SrpEncodingTest(TestCase):
     def test_n_is_group_size(self):
         self.assertEqual(len(_minimal(N)), P_BYTES)
         self.assertEqual(P_BYTES, 1024)
+
+    def test_srp_hash_is_blake2b_512(self):
+        digest = _blake2b(b'abc')
+        self.assertEqual(len(digest), 64)
 
 
 class SrpPasswordHashTest(TestCase):
