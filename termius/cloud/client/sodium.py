@@ -1,9 +1,11 @@
-"""Termius v4/v5 secret-key crypto (Argon2id + XChaCha20-Poly1305).
+"""Termius v4/v5 secret-key crypto (Argon2id + NaCl secretbox/box).
 
-Reversed from Termius 10.0.6 ``@termius/libtermius``:
+Reversed from Termius 7.10 / 10 ``libtermius``:
 
 * KDF: ``crypto_pwhash`` Argon2id, opslimit=2, memlimit=64MiB, 16-byte salt
-* Ciphertext: ``version(4) | type(1) | nonce(24) | tag(16) | ciphertext``
+* Secret: ``crypto_secretbox_easy`` (XSalsa20-Poly1305), not XChaCha20
+* Public: ``crypto_box_easy`` (X25519-XSalsa20-Poly1305)
+* Envelope: ``version | type | nonce(24) | mac(16) | ciphertext``
 """
 from __future__ import unicode_literals
 
@@ -11,9 +13,10 @@ import base64
 import os
 
 from nacl.bindings import (
-    crypto_aead_xchacha20poly1305_ietf_decrypt,
-    crypto_aead_xchacha20poly1305_ietf_encrypt,
-    crypto_scalarmult,
+    crypto_box_easy,
+    crypto_box_open_easy,
+    crypto_secretbox_easy,
+    crypto_secretbox_open_easy,
     crypto_scalarmult_base,
     randombytes,
 )
@@ -76,7 +79,7 @@ def hash_srp_password(password, salt):
 
 
 class SodiumSecretCryptor(object):
-    """XChaCha20-Poly1305 secret-key cryptor used by encryption schema v5."""
+    """NaCl secretbox cryptor used by DeviceToken and encryption schema v5."""
 
     bad_encrypted_exception = CryptorException
 
@@ -100,11 +103,8 @@ class SodiumSecretCryptor(object):
         if isinstance(plaintext, str):
             plaintext = plaintext.encode('utf-8')
         nonce = os.urandom(NONCE_SIZE)
-        combined = crypto_aead_xchacha20poly1305_ietf_encrypt(
-            plaintext, None, nonce, self.key
-        )
-        body, tag = combined[:-TAG_SIZE], combined[-TAG_SIZE:]
-        return bytes([VERSION_BYTE, TYPE_SECRET]) + nonce + tag + body
+        combined = crypto_secretbox_easy(plaintext, nonce, self.key)
+        return bytes([VERSION_BYTE, TYPE_SECRET]) + nonce + combined
 
     def decrypt_bytes(self, ciphertext):
         """Decrypt raw ciphertext bytes to raw plaintext bytes."""
@@ -114,16 +114,14 @@ class SodiumSecretCryptor(object):
             ciphertext = ciphertext.encode('ascii')
         if len(ciphertext) < OVERHEAD:
             raise CryptorException('incomplete sodium ciphertext')
-        if ciphertext[0] != VERSION_BYTE:
+        if ciphertext[0] not in (3, VERSION_BYTE):
             raise CryptorException(
                 'unsupported sodium version {}'.format(ciphertext[0])
             )
         nonce = ciphertext[HEADER_SIZE:HEADER_SIZE + NONCE_SIZE]
-        tag = ciphertext[HEADER_SIZE + NONCE_SIZE:OVERHEAD]
-        body = ciphertext[OVERHEAD:]
         try:
-            return crypto_aead_xchacha20poly1305_ietf_decrypt(
-                body + tag, None, nonce, self.key
+            return crypto_secretbox_open_easy(
+                ciphertext[HEADER_SIZE + NONCE_SIZE:], nonce, self.key,
             )
         except CryptoError as exc:
             raise CryptorException('sodium decryption failed') from exc
@@ -142,49 +140,12 @@ def generate_keypair():
     secret = randombytes(KEY_SIZE)
     public = crypto_scalarmult_base(secret)
     return public, secret
-
-
-
-def _rotl32(value, bits):
-    value &= 0xffffffff
-    return ((value << bits) | (value >> (32 - bits))) & 0xffffffff
-
-
-def _chacha_qr(state, a, b, c, d):
-    state[a] = (state[a] + state[b]) & 0xffffffff
-    state[d] = _rotl32(state[d] ^ state[a], 16)
-    state[c] = (state[c] + state[d]) & 0xffffffff
-    state[b] = _rotl32(state[b] ^ state[c], 12)
-    state[a] = (state[a] + state[b]) & 0xffffffff
-    state[d] = _rotl32(state[d] ^ state[a], 8)
-    state[c] = (state[c] + state[d]) & 0xffffffff
-    state[b] = _rotl32(state[b] ^ state[c], 7)
-
-
-def crypto_core_hchacha20(nonce16, key32):
-    """HChaCha20; matches libsodium crypto_core_hchacha20 (c=NULL)."""
-    import struct
-    sigma = b'expand 32-byte k'
-    state = list(struct.unpack('<16I', sigma + key32 + nonce16))
-    for _ in range(10):
-        _chacha_qr(state, 0, 4, 8, 12)
-        _chacha_qr(state, 1, 5, 9, 13)
-        _chacha_qr(state, 2, 6, 10, 14)
-        _chacha_qr(state, 3, 7, 11, 15)
-        _chacha_qr(state, 0, 5, 10, 15)
-        _chacha_qr(state, 1, 6, 11, 12)
-        _chacha_qr(state, 2, 7, 8, 13)
-        _chacha_qr(state, 3, 4, 9, 14)
-    return struct.pack('<8I', *(state[0:4] + state[12:16]))
-
-def ecdh_aead_key(private_key, public_key):
-    """X25519 + HChaCha20(zero nonce) as in crypto_box_curve25519xchacha20poly1305."""
-    shared = crypto_scalarmult(private_key, public_key)
-    return crypto_core_hchacha20(b'\x00' * 16, shared)
-
-
 class SodiumBoxCryptor(object):
-    """FromKeyPair / ForOwner wrapping: ECDH then the v4 secret envelope."""
+    """NaCl ``crypto_box`` envelope used for personal/vault key wrapping.
+
+    ``public_key`` is the other party's X25519 public key: recipient on
+    encrypt, sender on decrypt. ``private_key`` is ours.
+    """
 
     bad_encrypted_exception = CryptorException
 
@@ -193,26 +154,56 @@ class SodiumBoxCryptor(object):
             raise CryptorException('X25519 keys must be 32 bytes')
         self.public_key = public_key
         self.private_key = private_key
-        self._secret = SodiumSecretCryptor(
-            ecdh_aead_key(private_key, public_key)
-        )
 
     def encrypt(self, plaintext):
-        blob = self._secret.encrypt(plaintext)
-        if blob and blob[1] == TYPE_SECRET:
-            blob = bytes([blob[0], TYPE_PUBLIC]) + blob[2:]
-        return blob
+        if plaintext is None:
+            raise TypeError('plaintext must not be None')
+        if isinstance(plaintext, str):
+            plaintext = plaintext.encode('utf-8')
+        nonce = os.urandom(NONCE_SIZE)
+        combined = crypto_box_easy(
+            plaintext, nonce, self.public_key, self.private_key,
+        )
+        return bytes([VERSION_BYTE, TYPE_PUBLIC]) + nonce + combined
 
     def decrypt(self, ciphertext):
-        return self._secret.decrypt(ciphertext)
+        plaintext = self.decrypt_bytes(ciphertext)
+        try:
+            return plaintext.decode('utf-8')
+        except UnicodeDecodeError:
+            return plaintext.decode('latin1')
+
+    def decrypt_bytes(self, ciphertext):
+        if ciphertext is None:
+            raise CryptorException('ciphertext must not be None')
+        if isinstance(ciphertext, str):
+            ciphertext = ciphertext.encode('ascii')
+        if len(ciphertext) < OVERHEAD:
+            raise CryptorException('incomplete sodium ciphertext')
+        if ciphertext[0] not in (3, VERSION_BYTE):
+            raise CryptorException(
+                'unsupported sodium version {}'.format(ciphertext[0])
+            )
+        nonce = ciphertext[HEADER_SIZE:HEADER_SIZE + NONCE_SIZE]
+        try:
+            return crypto_box_open_easy(
+                ciphertext[HEADER_SIZE + NONCE_SIZE:],
+                nonce,
+                self.public_key,
+                self.private_key,
+            )
+        except CryptoError as exc:
+            raise CryptorException('sodium box decryption failed') from exc
 
     def wrap_secret(self, secret_32):
         """Encrypt a 32-byte vault/personal key; return raw ciphertext bytes."""
+        if isinstance(secret_32, str):
+            secret_32 = secret_32.encode('utf-8')
         return self.encrypt(secret_32)
 
     def unwrap_secret(self, ciphertext):
         """Decrypt a wrapped 32-byte key to raw bytes."""
-        plain = self._secret.decrypt_bytes(ciphertext)
+        plain = self.decrypt_bytes(ciphertext)
         if len(plain) != KEY_SIZE:
             raise CryptorException(
                 'unwrapped key has length {}'.format(len(plain))

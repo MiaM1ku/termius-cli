@@ -17,6 +17,16 @@ class SodiumCryptorTest(TestCase):
         self.assertEqual(blob[1], 1)
         self.assertEqual(cryptor.decrypt(blob), text)
 
+    def test_envelope_is_nacl_secretbox_easy(self):
+        from nacl.bindings import crypto_secretbox_open_easy
+
+        key = urandom(32)
+        cryptor = SodiumSecretCryptor(key)
+        blob = cryptor.encrypt('native-layout')
+        nonce = blob[2:26]
+        opened = crypto_secretbox_open_easy(blob[26:], nonce, key)
+        self.assertEqual(opened, b'native-layout')
+
     def test_hash_srp_password_is_padded_base64_of_32_bytes(self):
         salt = b'\x00' * 16
         hashed = hash_srp_password('vault-pass', salt)
