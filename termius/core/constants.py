@@ -9,3 +9,4 @@ API_BASE_URL = 'https://{}/'.format(API_HOST)
 WS_BASE_URL = 'wss://{}'.format(API_HOST)
 SOCKETIO_GRPC_PATH = '/socket.io/grpc-proxy'
 LOGIN_NAMESPACE = '/login_v2'
+SSO_DESKTOP_URL = 'https://account.termius.com/sso/desktop'

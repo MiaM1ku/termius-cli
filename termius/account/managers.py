@@ -10,6 +10,7 @@ from ..core.exceptions import (
     OptionNotSetException, OtpTokenRequired,
 )
 from ..cloud.client.grpc_login import GrpcLoginClient
+from ..cloud.client.browser_sso import BrowserSso
 
 
 class AccountManager(object):
@@ -23,23 +24,37 @@ class AccountManager(object):
         self.api = API()
         self.device = DeviceIdentity(config)
 
-    def login(self, username, password, authy_token=None):
+    def login(self, username, password, authy_token=None, firebase_token=None):
         """Retrieve apikey and crypto settings from server."""
         device = self.device.to_json()
         payload = None
+        login_email = '' if firebase_token else username
         try:
-            payload = self.api.login(
-                username, password, authy_token=authy_token, device=device
-            )
+            if firebase_token:
+                payload = GrpcLoginClient().login(
+                    login_email, password, device,
+                    authy_token=authy_token,
+                    firebase_token=firebase_token,
+                )
+            else:
+                payload = self.api.login(
+                    username, password, authy_token=authy_token, device=device
+                )
         except (AuthyTokenIssue, OtpTokenRequired):
             raise
         except (NotMigratedError, ApiError, Exception):
             payload = None
 
         if payload is None:
-            payload = GrpcLoginClient().login(
-                username, password, device, authy_token=authy_token
-            )
+            if firebase_token:
+                payload = self.api.login(
+                    login_email, password, authy_token=authy_token,
+                    device=device, firebase_token=firebase_token,
+                )
+            else:
+                payload = GrpcLoginClient().login(
+                    username, password, device, authy_token=authy_token
+                )
 
         credentials = payload.get('credentials') or payload
         token = credentials.get('token') or payload.get('token')
@@ -83,6 +98,41 @@ class AccountManager(object):
                     self.config.set('User', key, pkset[key])
         self.config.write()
         return payload
+
+    def login_with_sso(self, password, provider='google', authy_token=None,
+                       callback_url=None, log=None):
+        """Browser SSO, then encryption-password login."""
+        identity = self.prepare_sso(
+            provider=provider, callback_url=callback_url, log=log,
+            open_browser=False,
+        )
+        return self.login(
+            identity['email'], password, authy_token=authy_token,
+            firebase_token=identity['firebase_token'],
+        )
+
+    def prepare_sso(self, provider='google', callback_url=None, log=None,
+                    open_browser=False):
+        """Run browser Google/Apple SSO and detect the Termius account."""
+        sso = BrowserSso(
+            provider=provider, open_browser=open_browser, log=log
+        ).authenticate(
+            callback_url=callback_url
+        )
+        detected = self.api.detect_sso_action(sso['firebase_token'])
+        action = detected.get('action')
+        email = detected.get('email') or sso.get('email')
+        firebase_token = (
+            detected.get('firebase_token') or sso['firebase_token']
+        )
+        if action == 'sign-up':
+            raise ApiError(
+                'This Google account is not a Termius account yet. '
+                'Finish sign-up in the Termius app first, then retry.'
+            )
+        if not email:
+            raise ApiError('SSO did not return an email address')
+        return {'email': email, 'firebase_token': firebase_token, 'action': action}
 
     def set_settings(self, dictionary):
         """Store settings."""

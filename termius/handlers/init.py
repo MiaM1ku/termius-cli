@@ -29,6 +29,14 @@ class InitCommand(AbstractCommand):
         """Add more arguments to parser."""
         parser.add_argument('-u', '--username', metavar='USERNAME')
         parser.add_argument('-p', '--password', metavar='PASSWORD')
+        parser.add_argument(
+            '--google', action='store_true',
+            help='sign in with Google in a browser',
+        )
+        parser.add_argument(
+            '--callback-url',
+            help='termius:// continue-sso URL if the browser did not bounce back',
+        )
         return parser
 
     def init_namespace(self, parsed_args, username, password):
@@ -63,12 +71,14 @@ class InitCommand(AbstractCommand):
         """Process command call."""
         self.log.info('Initializing Termius CLI...\n')
 
-        username = parsed_args.username or self.prompt_username()
-        password = parsed_args.password or self.prompt_password()
-
-        namespace = self.init_namespace(
-            parsed_args, username, password
-        )
+        if parsed_args.google:
+            namespace = parsed_args
+        else:
+            username = parsed_args.username or self.prompt_username()
+            password = parsed_args.password or self.prompt_password()
+            namespace = self.init_namespace(
+                parsed_args, username, password
+            )
 
         self.login(namespace)
         self.log.info('\nCollecting data from the Termius Cloud...')

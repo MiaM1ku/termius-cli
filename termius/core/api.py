@@ -88,20 +88,23 @@ class API(object):
             'X-DEVICE-PLATFORM': DEVICE_PLATFORM,
         }
 
-    def login(self, email, password, authy_token=None, device=None):
+    def login(self, email, password, authy_token=None, device=None,
+              firebase_token=None):
         """Sign in via REST ``/api/v3.3/auth/device/login/``.
 
         Falls back to the legacy hashed-password form when the desktop-shaped
         payload is rejected. gRPC/SRP login is attempted first by AccountManager.
         """
         payload = {
-            'email': email,
+            'email': '' if firebase_token else email,
             'password': hash_password(password),
         }
         if authy_token is not None:
             payload['authy_token'] = authy_token
         if device is not None:
             payload['device'] = device
+        if firebase_token is not None:
+            payload['firebase_token'] = firebase_token
 
         response = requests.post(
             self.request_url('v3.3/auth/device/login/'),
@@ -109,7 +112,7 @@ class API(object):
             headers=self._headers(),
             timeout=self.timeout,
         )
-        if response.status_code >= 400:
+        if response.status_code >= 400 and not firebase_token:
             # Older accounts still accept the v3.1 form.
             legacy = dict(password=hash_password(password), email=email)
             if authy_token is not None:
@@ -128,6 +131,20 @@ class API(object):
         token = self._extract_token(response_payload)
         self.set_auth(email, token, token_type='device')
         return response_payload
+
+    def detect_sso_action(self, firebase_token, apple_id_token=None):
+        """POST ``/api/v4.1/auth/sso/firebase/detect_action/``."""
+        payload = {'firebase_token': firebase_token}
+        if apple_id_token:
+            payload['apple_id_token'] = apple_id_token
+        response = requests.post(
+            self.request_url('v4.1/auth/sso/firebase/detect_action/'),
+            json=payload,
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        self.__check_response(response, (200,))
+        return response.json()
 
     @staticmethod
     def _extract_token(payload):

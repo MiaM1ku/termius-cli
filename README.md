@@ -29,6 +29,7 @@ use a venv as above, or `pipx install -e .`.
 ```bash
 termius init                         # login, pull, import ssh config, push
 termius login -u you@example.com
+termius login --google               # print SSO URL, paste callback, then encryption password
 termius pull
 termius hosts
 termius info myhost
@@ -90,6 +91,22 @@ Tools:
 | `termius_snippets` | Snippets |
 
 Login and pull stay on the CLI (`termius login` / `termius pull`) so credentials are not passed through the MCP session.
+
+Google / SSO accounts:
+
+```bash
+termius login --google
+```
+
+The CLI prints an `account.termius.com/sso/desktop` URL. Open it on **any** device, sign in with Google, then paste the `termius://app/continue-sso?...` callback. Google only proves identity; Termius still needs the **encryption password** to unwrap the vault.
+
+Non-interactive paste (SSH from another machine, no TTY prompts for the URL):
+
+```bash
+termius login --google --callback-url 'termius://app/continue-sso?email=...&firebaseToken=...&requestId=...'
+```
+
+`--open-browser` also tries a local browser. It is optional and not required for remote sessions.
 
 ## Encryption notes
 
