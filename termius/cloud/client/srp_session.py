@@ -88,6 +88,53 @@ def _H(*parts):
     return _bytes_to_int(_sha256(*blobs))
 
 
+def botan_bigint_to_str(value):
+    """Match libtermius ``BigInt`` UTF-8: ``0x`` + uppercase hex."""
+    if isinstance(value, bytes):
+        value = _bytes_to_int(value)
+    if not isinstance(value, int):
+        raise TypeError('bigint value must be int or bytes')
+    if value < 0:
+        return '-' + botan_bigint_to_str(-value)
+    if value == 0:
+        return '0x00'
+    hexstr = format(value, 'X')
+    if len(hexstr) % 2:
+        hexstr = '0' + hexstr
+    return '0x' + hexstr
+
+
+def botan_bigint_from_str(value):
+    """Parse a libtermius public value / proof (0x-hex, bytes, or base64)."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, dict) and value.get('type') == 'Buffer':
+        value = bytes(value.get('data') or [])
+    if isinstance(value, list):
+        value = bytes(value)
+    if isinstance(value, bytes):
+        stripped = value.strip()
+        if stripped.startswith(b'0x') or stripped.startswith(b'0X'):
+            return int(stripped, 16)
+        if all(chr(b) in '0123456789abcdefABCDEF' for b in stripped) and len(stripped) >= 8:
+            return int(stripped, 16)
+        return _bytes_to_int(value)
+    text = value.strip()
+    if text.startswith('0x') or text.startswith('0X'):
+        return int(text, 16)
+    if all(c in '0123456789abcdefABCDEF' for c in text) and len(text) >= 8:
+        return int(text, 16)
+    try:
+        raw = base64.b64decode(text)
+    except Exception:
+        return int(text, 16)
+    if raw.startswith(b'0x') or raw.startswith(b'0X'):
+        return int(raw, 16)
+    return _bytes_to_int(raw)
+
+
 class ClientSession(object):
     """SRP-6a client session."""
 
@@ -121,10 +168,10 @@ class ClientSession(object):
         return _int_to_bytes(v)
 
     def agree_server_public_value(self, public_data):
-        """Accept server public B (bytes or base64)."""
-        if isinstance(public_data, str):
-            public_data = base64.b64decode(public_data)
-        self.B = _bytes_to_int(_to_bytes(public_data))
+        """Accept server public B (0x-hex, bytes, or base64)."""
+        self.B = botan_bigint_from_str(public_data)
+        if self.B is None:
+            return False
         if self.B % N == 0:
             return False
         self.u = _H(self.A, self.B)
@@ -148,11 +195,20 @@ class ClientSession(object):
         return self.M1
 
     def validate_server_proof(self, proof):
-        if isinstance(proof, str):
+        if proof is None:
+            return False
+        if isinstance(proof, str) and (
+            proof.startswith('0x') or proof.startswith('0X')
+        ):
+            proof = botan_bigint_from_str(proof)
+        if isinstance(proof, int):
+            proof = _int_to_bytes(proof)
+        elif isinstance(proof, str):
             try:
                 proof = base64.b64decode(proof)
             except Exception:
-                proof = _to_bytes(proof)
+                proof = botan_bigint_from_str(proof)
+                proof = _int_to_bytes(proof)
         return _to_bytes(proof) == self.M2
 
     def get_secret_key(self):

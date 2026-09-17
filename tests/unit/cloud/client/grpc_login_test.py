@@ -5,6 +5,9 @@ from termius.cloud.client.grpc_login import (
     GrpcLoginClient, build_initial_request, bytes_field, grpc_device,
     omit_none,
 )
+from termius.cloud.client.srp_session import (
+    botan_bigint_from_str, botan_bigint_to_str,
+)
 from termius.core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 
 
@@ -79,3 +82,19 @@ class RaiseIfErrorTest(TestCase):
                 'message': 'Invalid Firebase ID Token.',
             })
         self.assertIn('termius login --google', str(ctx.exception))
+
+class BotanBigIntTest(TestCase):
+    def test_uppercase_0x_even_hex(self):
+        self.assertEqual(botan_bigint_to_str(10), '0x0A')
+        self.assertEqual(botan_bigint_to_str(0xAB), '0xAB')
+        self.assertEqual(botan_bigint_to_str(b'\x01\x02'), '0x0102')
+
+    def test_parse_0x(self):
+        self.assertEqual(botan_bigint_from_str('0x0A'), 10)
+        self.assertEqual(botan_bigint_from_str('0xab'), 0xAB)
+
+    def test_roundtrip_bytes(self):
+        value = int.from_bytes(b'\xde\xad\xbe\xef', 'big')
+        encoded = botan_bigint_to_str(value)
+        self.assertTrue(encoded.startswith('0x'))
+        self.assertEqual(botan_bigint_from_str(encoded), value)

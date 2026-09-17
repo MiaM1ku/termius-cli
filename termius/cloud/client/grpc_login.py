@@ -9,7 +9,7 @@ from ...core.constants import (
 )
 from ...core.exceptions import ApiError, NotMigratedError, OtpTokenRequired
 from .sodium import SodiumSecretCryptor
-from .srp_session import ClientSession
+from .srp_session import ClientSession, botan_bigint_to_str
 
 LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +18,8 @@ OTP_TOKEN_REQUIRED = 3
 THROTTLED = 4
 APP_OUTDATED = 6
 NOT_MIGRATED = 7
+INVALID_PROOF = 8
+INVALID_PUBLIC_DATA = 9
 OTP_TOKEN_ERROR = 10
 LOGIN_APPROVE_REQUIRED = 12
 
@@ -161,8 +163,10 @@ class GrpcLoginClient(object):
 
             identifier = _first(initial, 'identifier') or email
             salt = bytes_field(_first(initial, 'salt'))
-            public_data = bytes_field(
-                _first(initial, 'publicData', 'public_data')
+            public_data = _first(initial, 'publicData', 'public_data')
+            LOGGER.debug(
+                'SRP initial field types=%s',
+                {k: type(v).__name__ for k, v in initial.items()},
             )
             if not identifier or not salt or not public_data:
                 raise ApiError(
@@ -177,8 +181,8 @@ class GrpcLoginClient(object):
             sio.emit(
                 'finalRequest',
                 {
-                    'public_data': _b64(session.get_public_value()),
-                    'proof': _b64(session.generate_proof()),
+                    'public_data': botan_bigint_to_str(session.A),
+                    'proof': botan_bigint_to_str(session.generate_proof()),
                 },
                 namespace=namespace,
             )
@@ -191,7 +195,7 @@ class GrpcLoginClient(object):
                 ))
 
             if not session.validate_server_proof(
-                bytes_field(_first(final, 'proof'))
+                _first(final, 'proof')
             ):
                 LOGGER.warning('SRP server proof did not validate; continuing')
 
@@ -275,6 +279,16 @@ class GrpcLoginClient(object):
         if code == LOGIN_APPROVE_REQUIRED or key == 'LOGIN_APPROVE_REQUIRED':
             raise ApiError(
                 'This login needs approval in the Termius app.',
+                payload=error,
+            )
+        if code == INVALID_PROOF or key == 'INVALID_PROOF':
+            raise ApiError(
+                'Wrong encryption password (SRP proof rejected).',
+                payload=error,
+            )
+        if code == INVALID_PUBLIC_DATA or key == 'INVALID_PUBLIC_DATA':
+            raise ApiError(
+                'SRP public value rejected by Termius Cloud.',
                 payload=error,
             )
         label = key or code
