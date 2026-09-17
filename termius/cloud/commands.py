@@ -5,8 +5,7 @@ from base64 import b64decode
 import six
 from six.moves import configparser
 
-from ..core.exceptions import AuthyTokenIssue
-from ..core.api import API
+from ..core.exceptions import NotSignedIn
 from ..core.commands import AbstractCommand
 from ..core.models.terminal import clean_order
 from .client.controllers import ApiController
@@ -35,16 +34,10 @@ class CloudSynchronizationCommand(AbstractCommand):
 
     def take_action(self, parsed_args):
         """Process CLI call."""
-        encryption_salt = b64decode(self.config.get('User', 'salt'))
-        hmac_salt = b64decode(self.config.get('User', 'hmac_salt'))
+        encryption_salt, hmac_salt = self._require_signed_in()
         password = parsed_args.password
         if password is None:
             password = self.prompt_password()
-        try:
-            self.validate_password(password)
-        except AuthyTokenIssue:
-            self.log.error('Authy token is invalid.')
-            return
         cryptor = UnifiedCryptor(password, encryption_salt, hmac_salt)
         controller = ApiController(self.storage, self.config, cryptor)
         pkset = {
@@ -63,15 +56,23 @@ class CloudSynchronizationCommand(AbstractCommand):
         with self.storage:
             self.process_sync(controller)
 
-    def validate_password(self, password):
-        """Raise an error when password invalid."""
-        username = self.config.get('User', 'username')
-        api = API()
-        try:
-            api.login(username, password)
-        except AuthyTokenIssue:
-            authy_token = self.prompt_authy_token()
-            api.login(username, password, authy_token=authy_token)
+    def _require_signed_in(self):
+        """Return vault salts or explain how to log in."""
+        username = self.config.get_safe('User', 'username')
+        apikey = self.config.get_safe('User', 'apikey')
+        salt = self.config.get_safe('User', 'salt')
+        hmac_salt = self.config.get_safe('User', 'hmac_salt')
+        if not username or not apikey:
+            raise NotSignedIn(
+                'Not signed in. Run: termius login --google\n'
+                '(email/password: termius login -u you@example.com)'
+            )
+        if not salt or not hmac_salt:
+            raise NotSignedIn(
+                'Login is incomplete (missing vault salts). '
+                'Sign in again: termius login --google'
+            )
+        return b64decode(salt), b64decode(hmac_salt)
 
 
 class PushCommand(CloudSynchronizationCommand):
@@ -159,12 +160,10 @@ class CryptoCommand(CloudSynchronizationCommand):
 
     def take_action(self, parsed_args):
         """Process decrypt and encrypt text."""
-        encryption_salt = b64decode(self.config.get('User', 'salt'))
-        hmac_salt = b64decode(self.config.get('User', 'hmac_salt'))
+        encryption_salt, hmac_salt = self._require_signed_in()
         password = parsed_args.password
         if password is None:
             password = self.prompt_password()
-        self.validate_password(password)
         cryptor = RNCryptor()
         cryptor.password = password
         cryptor.encryption_salt = encryption_salt

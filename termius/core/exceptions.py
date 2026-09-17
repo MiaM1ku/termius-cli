@@ -30,6 +30,10 @@ class OptionNotSetException(TermiusException):
     """Raise it when no option in section."""
 
 
+class NotSignedIn(TermiusException):
+    """Raise it when a command needs a Termius Cloud session."""
+
+
 class AuthyTokenIssue(TermiusException):
     """Raise it when API error caused by `authy_token`."""
 
