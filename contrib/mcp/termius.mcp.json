@@ -2,7 +2,7 @@
   "mcpServers": {
     "termius": {
       "command": "termius",
-      "args": ["mcp"]
+      "args": []
     }
   }
 }

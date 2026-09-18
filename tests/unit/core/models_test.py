@@ -28,7 +28,7 @@ class ModelsTest(TestCase):
             for i in not_fk_field_names:
                 setattr(instance, i, i)
 
-            yield self.save, instance
+            self.save(instance)
 
     @patch('termius.core.storage.PersistentDict')
     def save(self, model, mocked):

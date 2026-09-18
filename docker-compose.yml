@@ -1,5 +1,6 @@
-cli:
-  build: .
-  environment:
-    TERMIUS_USERNAME:
-    TERMIUS_PASSWORD:
+services:
+  mcp:
+    build: .
+    environment:
+      TERMIUS_VAULT_PASSWORD:
+      TERMIUS_SYNC_TTL: "60"

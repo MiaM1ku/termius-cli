@@ -1,30 +1,36 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Entrypoint for CLI tool."""
+"""Start the Termius MCP server on stdio."""
+import logging
 import sys
-import os
-import warnings
-from termius.app import TermiusApp
+
+from termius.mcp.server import run_stdio
 
 
-if os.getenv('TERMIUS_CLI_DEBUG'):
-    warnings.filterwarnings(
-        'ignore', r'Python 2 is no longer supported by the Python core team. ',
-        UserWarning, r'termius'
+def _configure_logging():
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.WARNING,
+        format='%(levelname)s %(name)s: %(message)s',
     )
-    warnings.filterwarnings(
-        'ignore', (r'Python 3.5 support will be dropped '
-                   'in the next release of cryptography.'),
-        UserWarning, r'termius'
-    )
+    logging.getLogger('requests').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    logging.getLogger('paramiko').setLevel(logging.WARNING)
 
 
 def main(argv=None):
-    """Process call from terminal."""
-    app = TermiusApp()
-
-    return app.run(argv or sys.argv[1:])
+    """Process start from an MCP client or a terminal."""
+    del argv
+    _configure_logging()
+    if sys.stdin.isatty():
+        sys.stderr.write(
+            'Termius MCP server. Point your MCP client at this binary '
+            '(no args). Waiting on stdin.\n'
+        )
+        sys.stderr.flush()
+    run_stdio()
+    return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

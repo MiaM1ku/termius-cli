@@ -1,19 +1,17 @@
-FROM ubuntu
+FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y \
-        python-dev \
-        python3-dev \
+    && apt-get install -y --no-install-recommends \
         libffi-dev \
         libssl-dev \
-        python-pip \
-        python3-pip \
-        python-tox \
         git \
-    && git clone https://github.com/sstephenson/bats.git && cd bats && ./install.sh /usr/local/ && cd -
+    && rm -rf /var/lib/apt/lists/*
 
 ADD . /termius
-
 WORKDIR /termius
 
-CMD tox
+RUN pip install -U pip setuptools \
+    && pip install -r dev-requirements.txt \
+    && pip install -e .
+
+CMD ["pytest", "tests/unit"]

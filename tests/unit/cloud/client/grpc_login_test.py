@@ -82,7 +82,7 @@ class RaiseIfErrorTest(TestCase):
                 'code': 2, 'key': 'UNAUTHENTICATED',
                 'message': 'Invalid Firebase ID Token.',
             })
-        self.assertIn('termius login --google', str(ctx.exception))
+        self.assertIn('method=google', str(ctx.exception))
 
 class BotanBigIntTest(TestCase):
     def test_uppercase_0x_even_hex(self):

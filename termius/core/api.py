@@ -179,17 +179,18 @@ class API(object):
             if code in (3, 10):
                 raise OtpTokenRequired(response.text)
         if response.status_code != 200:
+            body = response.text if isinstance(response.text, str) else ''
             self.logger.warning(
                 'REST login failed status=%s body=%s',
                 response.status_code,
-                (response.text or '')[:200],
+                body[:200],
             )
         self.__check_response(response, (200,))
 
     def __check_response(self, response, success_statuses=None):
         if response.status_code == 490:
             raise OutdatedVersion(
-                'The current version of Termius CLI is incompatible '
+                'The current version of termius is incompatible '
                 'with the Termius Cloud. Please upgrade.'
             )
         success_statuses = success_statuses or (200, 201, 202, 204)

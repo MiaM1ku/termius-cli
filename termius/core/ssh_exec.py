@@ -45,7 +45,9 @@ def run_host_command(host, ssh_config, command, timeout=60):
     if not username:
         raise SshExecError(
             'Host {} has no username. Team identities are linked on pull; '
-            'run: termius pull'.format(host.label or host.address)
+            'call sync or wait for auto-sync.'.format(
+                host.label or host.address
+            )
         )
     pkey = _load_pkey(identity)
     port = int(ssh_config.port or 22)

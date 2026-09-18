@@ -1,8 +1,7 @@
-"""CLI Google SSO using Termius desktop continue-sso.
+"""Google SSO using Termius desktop continue-sso.
 
-Prints ``https://account.termius.com/sso/desktop`` and waits for a pasted
-``termius://app/continue-sso?...`` callback. Does not open a browser
-(w3m / lynx would steal the TTY).
+Builds ``https://account.termius.com/sso/desktop`` and accepts a pasted
+``termius://app/continue-sso?...`` callback. Does not open a browser.
 """
 from __future__ import unicode_literals
 

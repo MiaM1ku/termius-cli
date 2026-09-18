@@ -1,306 +1,110 @@
-"""Stdio MCP server exposing Termius inventory to AI agents."""
+# -*- coding: utf-8 -*-
+"""Stdio MCP server for Termius Cloud."""
 from __future__ import unicode_literals
 
-import json
+import logging
 import sys
-from argparse import Namespace
 
-from ..account.managers import AccountManager
-from ..app import TermiusApp
-from ..core.commands.mixins import SshConfigMergerMixin
-from ..core.models.terminal import Group, Host, Identity, SshKey, Snippet
-from ..core.settings import Config
-from ..core.storage import ApplicationStorage
-from ..core.storage.strategies import RelatedGetStrategy
-from ..formatters.mixins import SshCommandFormatterMixin
-from ..core.ssh_exec import SshExecError, run_host_command
-
+from .. import __version__
+from ..runtime import Runtime
+from .protocol import ProtocolError, read_message, write_message
+from .tools import TOOLS, ToolError, call_tool
 
 PROTOCOL_VERSION = '2024-11-05'
+LOGGER = logging.getLogger(__name__)
 
-TOOLS = [
-    {
-        'name': 'termius_status',
-        'description': 'Show Termius CLI login state and inventory counts.',
-        'inputSchema': {'type': 'object', 'properties': {}},
-    },
-    {
-        'name': 'termius_hosts',
-        'description': 'List saved Termius hosts (label, address, group, id).',
-        'inputSchema': {
-            'type': 'object',
-            'properties': {
-                'query': {
-                    'type': 'string',
-                    'description': 'Optional substring filter on label or address',
-                }
-            },
-        },
-    },
-    {
-        'name': 'termius_host_info',
-        'description': 'Get one host plus merged SSH settings and ssh command.',
-        'inputSchema': {
-            'type': 'object',
-            'properties': {
-                'name': {
-                    'type': 'string',
-                    'description': 'Host id or label',
-                }
-            },
-            'required': ['name'],
-        },
-    },
-    {
-        'name': 'termius_identities',
-        'description': 'List identities (usernames / keys). Passwords are omitted.',
-        'inputSchema': {'type': 'object', 'properties': {}},
-    },
-    {
-        'name': 'termius_keys',
-        'description': 'List SSH keys. Private key material is omitted.',
-        'inputSchema': {'type': 'object', 'properties': {}},
-    },
-    {
-        'name': 'termius_groups',
-        'description': 'List host groups.',
-        'inputSchema': {'type': 'object', 'properties': {}},
-    },
-    {
-        'name': 'termius_snippets',
-        'description': 'List saved snippets / scripts.',
-        'inputSchema': {'type': 'object', 'properties': {}},
-    },
-    {
-        'name': 'termius_ssh_command',
-        'description': 'Render an ssh(1) command line for a host.',
-        'inputSchema': {
-            'type': 'object',
-            'properties': {
-                'name': {'type': 'string', 'description': 'Host id or label'}
-            },
-            'required': ['name'],
-        },
-    },
-    {
-        'name': 'termius_exec',
-        'description': (
-            'Run a shell command on a Termius host over SSH and return '
-            'stdout/stderr/exit_code. Uses the host username, password or '
-            'key from the vault. Do not echo secrets.'
-        ),
-        'inputSchema': {
-            'type': 'object',
-            'properties': {
-                'name': {
-                    'type': 'string',
-                    'description': 'Host id or label',
-                },
-                'command': {
-                    'type': 'string',
-                    'description': 'Shell command to run on the remote host',
-                },
-                'timeout': {
-                    'type': 'integer',
-                    'description': 'Seconds to wait (default 60)',
-                },
-            },
-            'required': ['name', 'command'],
-        },
-    },
-]
+INSTRUCTIONS = (
+    'Termius Cloud inventory and SSH exec. Call status first. '
+    'If not signed in, use login (google is two-step: login then '
+    'login_complete). hosts, host, exec, and inventory auto-pull the vault '
+    'when a password is remembered. Never echo vault or host passwords.'
+)
 
 
-class _Context(SshCommandFormatterMixin, SshConfigMergerMixin):
-    def __init__(self):
-        from os.path import expanduser
-        from pathlib2 import Path as P
-        self.app = TermiusApp()
-        self.app.NAME = 'termius'
-        self.app.directory_path = P(expanduser('~/.termius/'))
-        if not self.app.directory_path.is_dir():
-            self.app.directory_path.mkdir(parents=True)
-        self.app_args = Namespace(verbose_level=1, debug=False, log_file=None)
-        self.config = Config(self)
-        self.storage = ApplicationStorage(self, get_strategy=RelatedGetStrategy)
-
-
-def _ok(result):
+def _ok(data, summary):
     return {
-        'content': [{'type': 'text', 'text': json.dumps(result, default=str, indent=2)}]
+        'content': [{'type': 'text', 'text': summary}],
+        'structuredContent': data,
     }
 
 
-def _find(storage, model, name):
-    try:
-        relation_id = int(name)
-    except (TypeError, ValueError):
-        relation_id = None
-    return storage.get(model, query_union=any, id=relation_id, label=name)
+def _error_result(message, code=None):
+    payload = {'error': message}
+    if code:
+        payload['code'] = code
+    return {
+        'content': [{'type': 'text', 'text': message}],
+        'structuredContent': payload,
+        'isError': True,
+    }
 
 
-def handle_tool(ctx, name, arguments):
-    arguments = arguments or {}
-    if name == 'termius_status':
-        username = ctx.config.get_safe('User', 'username', default='')
-        return _ok({
-            'logged_in': bool(username),
-            'username': username,
-            'encryption_schema': ctx.config.get_safe(
-                'User', 'encryption_schema', default=''
-            ),
-            'last_synced': ctx.config.get_safe(
-                'CloudSynchronization', 'last_synced', default=''
-            ),
-            'hosts': len(ctx.storage.get_all(Host)),
-            'groups': len(ctx.storage.get_all(Group)),
-            'identities': len(ctx.storage.get_all(Identity)),
-            'keys': len(ctx.storage.get_all(SshKey)),
-            'snippets': len(ctx.storage.get_all(Snippet)),
-        })
-    if name == 'termius_hosts':
-        query = (arguments.get('query') or '').lower()
-        rows = []
-        for host in ctx.storage.get_all(Host):
-            ssh_config = ctx.get_merged_ssh_config(host)
-            identity = ssh_config.identity
-            row = {
-                'id': host.id,
-                'label': host.label,
-                'address': host.address,
-                'group': getattr(host.group, 'label', None),
-                'username': identity.username if identity else None,
-                'has_password': bool(identity and identity.password),
-            }
-            blob = json.dumps(row).lower()
-            if not query or query in blob:
-                rows.append(row)
-        return _ok(rows)
-    if name == 'termius_host_info':
-        host = _find(ctx.storage, Host, arguments['name'])
-        ssh_config = ctx.get_merged_ssh_config(host)
-        identity = ssh_config.identity
-        ssh_key = ssh_config.get_ssh_key()
-        ssh_config['agent_forwarding'] = (
-            AccountManager(ctx.config).get_settings().get('agent_forwarding')
-        )
-        command = ctx.render_command(
-            ssh_config, host.address, ssh_key and ssh_key.file_path(ctx)
-        ).strip()
-        return _ok({
-            'id': host.id,
-            'label': host.label,
-            'address': host.address,
-            'port': ssh_config.port,
-            'username': identity.username if identity else None,
-            'has_password': bool(identity and identity.password),
-            'ssh_key': ssh_key.label if ssh_key else None,
-            'ssh_command': command,
-        })
-    if name == 'termius_identities':
-        rows = []
-        for ident in ctx.storage.get_all(Identity):
-            if ident.is_visible is False:
-                continue
-            rows.append({
-                'id': ident.id,
-                'label': ident.label,
-                'username': ident.username,
-                'has_password': bool(ident.password),
-                'ssh_key': ident.ssh_key.label if ident.ssh_key else None,
-            })
-        return _ok(rows)
-    if name == 'termius_keys':
-        return _ok([
-            {'id': key.id, 'label': key.label, 'has_private_key': bool(key.private_key)}
-            for key in ctx.storage.get_all(SshKey)
-        ])
-    if name == 'termius_groups':
-        return _ok([
-            {'id': group.id, 'label': group.label}
-            for group in ctx.storage.get_all(Group)
-        ])
-    if name == 'termius_snippets':
-        return _ok([
-            {'id': snippet.id, 'label': snippet.label, 'script': snippet.script}
-            for snippet in ctx.storage.get_all(Snippet)
-        ])
-    if name == 'termius_ssh_command':
-        host = _find(ctx.storage, Host, arguments['name'])
-        ssh_config = ctx.get_merged_ssh_config(host)
-        ssh_key = ssh_config.get_ssh_key()
-        ssh_config['agent_forwarding'] = (
-            AccountManager(ctx.config).get_settings().get('agent_forwarding')
-        )
-        command = ctx.render_command(
-            ssh_config, host.address, ssh_key and ssh_key.file_path(ctx)
-        ).strip()
-        return _ok({'ssh_command': command})
-    if name == 'termius_exec':
-        host = _find(ctx.storage, Host, arguments['name'])
-        ssh_config = ctx.get_merged_ssh_config(host)
-        timeout = arguments.get('timeout') or 60
+def _initialize_result():
+    return {
+        'protocolVersion': PROTOCOL_VERSION,
+        'capabilities': {'tools': {}},
+        'serverInfo': {'name': 'termius', 'version': __version__},
+        'instructions': INSTRUCTIONS,
+    }
+
+
+def handle_rpc(runtime, message):
+    """Return a JSON-RPC response dict, or None for a notification."""
+    method = message.get('method')
+    message_id = message.get('id')
+    params = message.get('params') or {}
+    if method == 'initialize':
+        return _rpc_result(message_id, _initialize_result())
+    if method == 'notifications/initialized':
+        return None
+    if method == 'tools/list':
+        return _rpc_result(message_id, {'tools': TOOLS})
+    if method == 'tools/call':
+        name = params.get('name')
+        arguments = params.get('arguments') or {}
         try:
-            timeout = int(timeout)
-        except (TypeError, ValueError):
-            timeout = 60
-        try:
-            result = run_host_command(
-                host, ssh_config, arguments.get('command'), timeout=timeout,
+            data, summary = call_tool(runtime, name, arguments)
+            return _rpc_result(message_id, _ok(data, summary))
+        except ToolError as exc:
+            return _rpc_result(message_id, _error_result(str(exc), exc.code))
+        except Exception as exc:
+            LOGGER.exception('Tool %s failed', name)
+            return _rpc_result(
+                message_id, _error_result(str(exc), 'internal_error')
             )
-        except SshExecError as exc:
-            return _ok({'ok': False, 'error': str(exc)})
-        result['ok'] = result.get('exit_code') == 0
-        return _ok(result)
-    raise ValueError('Unknown tool: {}'.format(name))
+    if method == 'ping':
+        return _rpc_result(message_id, {})
+    if message_id is not None:
+        return {
+            'jsonrpc': '2.0',
+            'id': message_id,
+            'error': {
+                'code': -32601,
+                'message': 'Method not found: {}'.format(method),
+            },
+        }
+    return None
 
 
-def _respond(message_id, result=None, error=None):
-    payload = {'jsonrpc': '2.0', 'id': message_id}
-    if error is not None:
-        payload['error'] = error
-    else:
-        payload['result'] = result
-    sys.stdout.write(json.dumps(payload) + '\n')
-    sys.stdout.flush()
+def _rpc_result(message_id, result):
+    return {'jsonrpc': '2.0', 'id': message_id, 'result': result}
 
 
-def run_stdio():
-    """Serve MCP over stdin/stdout."""
-    ctx = _Context()
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
+def run_stdio(runtime=None, stdin=None, stdout=None):
+    """Serve MCP over stdin/stdout until EOF."""
+    runtime = runtime or Runtime()
+    stdin = stdin or sys.stdin.buffer
+    stdout = stdout or sys.stdout.buffer
+    while True:
         try:
-            message = json.loads(line)
-        except ValueError:
+            message = read_message(stdin)
+        except ProtocolError as exc:
+            LOGGER.warning('Bad MCP frame: %s', exc)
             continue
-        method = message.get('method')
-        message_id = message.get('id')
-        params = message.get('params') or {}
-        if method == 'initialize':
-            _respond(message_id, {
-                'protocolVersion': PROTOCOL_VERSION,
-                'capabilities': {'tools': {}},
-                'serverInfo': {'name': 'termius', 'version': '2.0.0'},
-            })
-        elif method == 'notifications/initialized':
+        if message is None:
+            return
+        if not isinstance(message, dict):
             continue
-        elif method == 'tools/list':
-            _respond(message_id, {'tools': TOOLS})
-        elif method == 'tools/call':
-            try:
-                result = handle_tool(ctx, params.get('name'), params.get('arguments'))
-                _respond(message_id, result)
-            except Exception as exc:
-                _respond(message_id, {
-                    'content': [{'type': 'text', 'text': str(exc)}],
-                    'isError': True,
-                })
-        elif method == 'ping':
-            _respond(message_id, {})
-        elif message_id is not None:
-            _respond(message_id, error={
-                'code': -32601, 'message': 'Method not found: {}'.format(method)
-            })
+        response = handle_rpc(runtime, message)
+        if response is not None:
+            write_message(stdout, response)

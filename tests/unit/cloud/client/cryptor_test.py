@@ -19,7 +19,7 @@ def test_dual_encrypt_and_decrypt():
     ]
     for config, text in product(configs, texts):
         cryptor = generate_cryptor(**config)
-        yield dual_encrypt_decrypt_text, cryptor, text
+        dual_encrypt_decrypt_text(cryptor, text)
 
 
 def dual_encrypt_decrypt_text(cryptor, original_text):
@@ -44,7 +44,7 @@ def test_encrypt_and_decrypt():
          'Aihe0fEvUCObqsbPwOaD3kaj6L7W+uK03ayY6+mveto9yQqg=='),
     ]
     for text, ciphertext in text__ciphertexts:
-        yield encrypt_decrypt_text, cryptor, text, ciphertext
+        encrypt_decrypt_text(cryptor, text, ciphertext)
 
 
 def encrypt_decrypt_text(cryptor, original_text, original_ciphertext):

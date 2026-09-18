@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-"""Package with user data manipulation command."""
+"""Termius Cloud sync and crypto."""

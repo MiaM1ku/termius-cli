@@ -10,6 +10,7 @@ from ..signals import (
 from .idgenerators import UUIDGenerator
 from .driver import PersistentDict
 from ..exceptions import DoesNotExistException, TooManyEntriesException
+from ..paths import directory_of
 from .strategies import SaveStrategy, GetStrategy, SoftDeleteStrategy
 from .query import Query
 
@@ -50,16 +51,20 @@ class ApplicationStorage(object):
     defaultstorage = list
     logger = logging.getLogger(__name__)
 
-    def __init__(self, command, save_strategy=None,
+    def __init__(self, app, save_strategy=None,
                  get_strategy=None, delete_strategy=None, **kwargs):
-        """Create new storage for application."""
+        """Create new storage for application.
+
+        ``app`` is a Runtime (or test double) with ``directory_path``.
+        Signal handlers still receive it as ``command``.
+        """
         paths_kwargs = dict(
-            application_directory=command.app.directory_path, **kwargs
+            application_directory=directory_of(app), **kwargs
         )
         self._path = self.path.format(**paths_kwargs)
         self.driver = PersistentDict(self._path)
         self.id_generator = UUIDGenerator(self)
-        self.command = command
+        self.command = app
 
         self.strategies = Strategies(
             self.make_strategy(get_strategy, GetStrategy),

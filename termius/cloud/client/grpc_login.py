@@ -361,7 +361,7 @@ class GrpcLoginClient(object):
         if log:
             bits.append('events={}'.format(','.join(log)))
         if firebase_token:
-            bits.append('re-run: termius login --google')
+            bits.append('call login with method=google again')
         return '; '.join(bits)
 
     @staticmethod
@@ -384,7 +384,7 @@ class GrpcLoginClient(object):
         if code == UNAUTHENTICATED or key == 'UNAUTHENTICATED':
             raise ApiError(
                 'Firebase session expired or invalid. '
-                'Run: termius login --google',
+                'Call login with method=google again.',
                 payload=error,
             )
         if code == APP_OUTDATED or key == 'APP_OUTDATED':

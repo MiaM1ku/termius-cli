@@ -4,13 +4,9 @@ from setuptools import setup, find_packages
 from termius import __version__
 
 
-# pylint: disable=invalid-name
 cli_command_name = 'termius'
 
-# pylint: disable=invalid-name
 requires = [
-    'cliff>=2.7.0',
-    'stevedore>=1.10.0',
     'requests>=2.7.0',
     'cryptography>=3.2',
     'six>=1.10.0',
@@ -23,48 +19,14 @@ requires = [
     'websocket-client>=1.6.0',
 ]
 
-# pylint: disable=invalid-name
-handlers = [
-    'import-ssh-config = termius.porting.commands:SSHImportCommand',
-    'export-ssh-config = termius.porting.commands:SSHExportCommand',
-    'import-hosts = termius.porting.commands:ImportHostsCommand',
-    'login = termius.account.commands:LoginCommand',
-    'logout = termius.account.commands:LogoutCommand',
-    'settings = termius.account.commands:SettingsCommand',
-    'push = termius.cloud.commands:PushCommand',
-    'pull = termius.cloud.commands:PullCommand',
-    'fullclean = termius.cloud.commands:FullCleanCommand',
-    'snippet = termius.handlers:SnippetCommand',
-    'snippets = termius.handlers:SnippetsCommand',
-    'host = termius.handlers:HostCommand',
-    'hosts = termius.handlers:HostsCommand',
-    'identity = termius.handlers:IdentityCommand',
-    'identities = termius.handlers:IdentitiesCommand',
-    'key = termius.handlers:SshKeyCommand',
-    'keys = termius.handlers:SshKeysCommand',
-    'group = termius.handlers:GroupCommand',
-    'groups = termius.handlers:GroupsCommand',
-    'pfrule = termius.handlers:PFRuleCommand',
-    'pfrules = termius.handlers:PFRulesCommand',
-    'tags = termius.handlers:TagsCommand',
-    'info = termius.handlers:InfoCommand',
-    'connect = termius.handlers:ConnectCommand',
-    'crypto = termius.cloud.commands:CryptoCommand',
-    'init = termius.handlers:InitCommand',
-    'status = termius.handlers.status:StatusCommand',
-    'ssh-command = termius.handlers.ssh_command:SshCommandCommand',
-    'mcp = termius.handlers.mcp:McpCommand',
-    'exec = termius.handlers.exec:ExecCommand',
-]
-
 
 def get_long_description():
     try:
         import pypandoc
         return pypandoc.convert('README.md', 'rst')
-    except(IOError, ImportError):
-        with open('README.md') as f:
-            return f.read()
+    except (IOError, ImportError):
+        with open('README.md') as handle:
+            return handle.read()
 
 
 setup(
@@ -74,45 +36,29 @@ setup(
     author='Termius Corporation',
     author_email='hello@termius.com',
     url='https://github.com/termius/termius-cli',
-    description='Termius ssh-config utility.',
+    description='Termius Cloud MCP server.',
     long_description=get_long_description(),
-    keywords=['termius', 'crystalnix'],
+    keywords=['termius', 'mcp'],
     packages=find_packages(exclude=['tests']),
     install_requires=requires,
-    test_suite='nose.collector',
     python_requires='>=3.9',
     zip_safe=False,
     include_package_data=True,
     classifiers=[
         'Development Status :: 4 - Beta',
-        'Environment :: Console',
-        'Intended Audience :: System Administrators',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: BSD License',
         'Operating System :: Unix',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
         'Topic :: Utilities',
     ],
     entry_points={
         'console_scripts': [
             '{} = termius.main:main'.format(cli_command_name)
-        ],
-        'termius.handlers': handlers,
-        'termius.info.formatters': [
-            'ssh = termius.formatters.ssh:SshFormatter',
-            'table = cliff.formatters.table:TableFormatter',
-            'shell = cliff.formatters.shell:ShellFormatter',
-            'value = cliff.formatters.value:ValueFormatter',
-            'yaml = cliff.formatters.yaml_format:YAMLFormatter',
-            'json = cliff.formatters.json_format:JSONFormatter',
-        ],
-        'termius.sync.providers': [
-            'ssh = termius.sync.providers.ssh:SSHService',
         ],
     },
 )

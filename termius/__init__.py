@@ -1,3 +1,3 @@
 # -*- coding: utf-8 -*-
-"""Package with CLI tool and API."""
-__version__ = '2.0.9'
+"""Termius Cloud MCP server."""
+__version__ = '3.0.0'

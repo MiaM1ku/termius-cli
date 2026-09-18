@@ -1,8 +1,8 @@
-# Codex MCP snippet for Termius CLI.
-# Copy into ~/.codex/config.toml, then point `command` at your `termius` binary.
+# Codex MCP snippet for Termius.
+# Merge into ~/.codex/config.toml, then point `command` at your `termius` binary.
 
 [mcp_servers.termius]
 command = "termius"
-args = ["mcp"]
+args = []
 startup_timeout_sec = 30.0
 tool_timeout_sec = 60.0

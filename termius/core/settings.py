@@ -4,6 +4,8 @@ from pathlib2 import Path
 from six import PY2
 from six.moves import configparser
 
+from .paths import directory_of
+
 
 class Config(object):
     """Class for application config."""
@@ -11,17 +13,21 @@ class Config(object):
     paths = ['{application_directory}/config']
     write_mode = 'wb' if PY2 else 'w'
 
-    def __init__(self, command, **kwargs):
-        """Create new config."""
+    def __init__(self, app, **kwargs):
+        """Create new config.
+
+        ``app`` is a Runtime (or test double) with ``directory_path``.
+        """
         assert self.paths, "It must have at least single config file's path."
         paths_kwargs = dict(
-            application_directory=command.app.directory_path, **kwargs
+            application_directory=directory_of(app), **kwargs
         )
         self._paths = [Path(i.format(**paths_kwargs)) for i in self.paths]
         self.touch_files()
         self.config = configparser.ConfigParser()
         self.config.read([str(i) for i in self._paths])
-        self.command = command
+        self.app = app
+        self.command = app
 
     @property
     def ssh_key_dir_path(self):
@@ -29,7 +35,7 @@ class Config(object):
         try:
             ssh_keys_path = Path(self.config.get('SSH_keys', 'directory'))
         except (configparser.NoSectionError, configparser.NoOptionError):
-            ssh_keys_path = self.command.app.directory_path / 'ssh_keys'
+            ssh_keys_path = Path(directory_of(self.app)) / 'ssh_keys'
             self.set('SSH_keys', 'directory', str(ssh_keys_path))
             self.write()
         return ssh_keys_path

@@ -31,7 +31,7 @@ class OptionNotSetException(TermiusException):
 
 
 class NotSignedIn(TermiusException):
-    """Raise it when a command needs a Termius Cloud session."""
+    """Raise it when a tool needs a Termius Cloud session."""
 
 
 class AuthyTokenIssue(TermiusException):

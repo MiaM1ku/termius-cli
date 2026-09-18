@@ -9,7 +9,6 @@ ignore-paths:
   - build
   - tests
   - termius/core/utils.py  # it's too complex
-  - termius/core/commands/help.py  # it's too complex
 
 
 ignore-patterns:
