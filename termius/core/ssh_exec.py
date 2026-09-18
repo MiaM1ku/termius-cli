@@ -23,9 +23,11 @@ def _load_pkey(identity):
     if passphrase == '':
         passphrase = None
     errors = []
-    for cls in (
-        paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey, paramiko.DSSKey,
-    ):
+    key_classes = [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]
+    dss = getattr(paramiko, 'DSSKey', None)
+    if dss is not None:
+        key_classes.append(dss)
+    for cls in key_classes:
         try:
             return cls.from_private_key(StringIO(data), password=passphrase)
         except Exception as exc:
