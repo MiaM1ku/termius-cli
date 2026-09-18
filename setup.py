@@ -35,7 +35,7 @@ setup(
     license='BSD',
     author='Termius Corporation',
     author_email='hello@termius.com',
-    url='https://github.com/termius/termius-cli',
+    url='https://github.com/MiaM1ku/termius-mcp',
     description='Termius Cloud MCP server.',
     long_description=get_long_description(),
     keywords=['termius', 'mcp'],

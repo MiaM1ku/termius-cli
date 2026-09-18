@@ -1,4 +1,4 @@
-# Codex MCP snippet for Termius.
+# Codex MCP snippet for Termius MCP.
 # Merge into ~/.codex/config.toml, then point `command` at your `termius` binary.
 
 [mcp_servers.termius]

@@ -2,36 +2,29 @@
 
 stdio MCP server for [Termius](https://termius.com/) Cloud.
 
-This tree talks to **Termius desktop 10.0.6** APIs:
+Repository: [MiaM1ku/termius-mcp](https://github.com/MiaM1ku/termius-mcp).
 
-- Device login (`/api/v3.3/auth/device/login/`) with `DeviceToken` auth
-- Desktop request headers (`X-DEVICE-APP-VERSION`, `X-DEVICE-PLATFORM`)
-- SRP / Socket.IO login for accounts on encryption schema v5
-- RNCryptor (v3) and Sodium XChaCha20-Poly1305 (v4/v5) field encryption
-- `v4/terminal/sync/` with fallback to `v3/terminal/bulk/`
-- Host passwords, key passphrases, and extra SSH settings from the app
+`termius` is not a human CLI. An MCP client starts the binary with no args.
+The process speaks JSON-RPC on stdin/stdout. Login, vault sync, host lookup,
+and SSH exec are tools.
 
-There is no human CLI. `termius` only speaks MCP on stdin/stdout.
+This tree talks to **Termius desktop 10.0.6** APIs (DeviceToken, SRP / gRPC
+login, RNCryptor v3 and Sodium v4/v5, `v4/terminal/sync/`).
 
 ## Install
 
-```bash
-python3 -m venv ~/.local/share/termius-cli
-~/.local/share/termius-cli/bin/pip install -U pip
-~/.local/share/termius-cli/bin/pip install -e .
-ln -sf ~/.local/share/termius-cli/bin/termius ~/.local/bin/termius
-```
-
-Python 3.9+ is required. On Debian/Ubuntu (PEP 668) do not use system `pip`;
-use a venv as above, or `pipx install -e .`.
-
-## MCP client
+Python 3.9+ is required. On Debian/Ubuntu (PEP 668) use a venv or `pipx`.
 
 ```bash
-termius
+python3 -m venv ~/.local/share/termius-mcp
+~/.local/share/termius-mcp/bin/pip install -U pip
+~/.local/share/termius-mcp/bin/pip install -e .
+ln -sf ~/.local/share/termius-mcp/bin/termius ~/.local/bin/termius
 ```
 
-Example Claude / generic MCP config (`contrib/mcp/termius.mcp.json`):
+Point the MCP client at that binary. Do not pass `mcp` or other args.
+
+Claude / generic (`contrib/mcp/termius.mcp.json`):
 
 ```json
 {
@@ -44,7 +37,7 @@ Example Claude / generic MCP config (`contrib/mcp/termius.mcp.json`):
 }
 ```
 
-Example Codex config (`contrib/mcp/codex.toml`, merge into `~/.codex/config.toml`):
+Codex (`contrib/mcp/codex.toml`, merge into `~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.termius]
@@ -54,12 +47,56 @@ startup_timeout_sec = 30.0
 tool_timeout_sec = 60.0
 ```
 
+Pi / OMP (`~/.omp/agent/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "termius": {
+      "type": "stdio",
+      "command": "termius",
+      "args": []
+    }
+  }
+}
+```
+
+Restart the MCP client after you edit the config. `connecting [stdio]` is the
+handshake. It becomes connected when `initialize` succeeds. Login happens
+after that, through tools.
+
 Optional environment variables:
 
 | Variable | Purpose |
 | --- | --- |
 | `TERMIUS_VAULT_PASSWORD` | Vault encryption password (preferred over the remember file) |
 | `TERMIUS_SYNC_TTL` | Seconds before the next automatic pull. Default `60`. `0` pulls on every read. |
+
+## First-time setup
+
+There is no setup wizard. After the server is connected, use the tools.
+
+If `~/.termius/config` already has a DeviceToken (a previous login):
+
+1. Call `status`. Expect `logged_in: true` and often `vault_remembered: false`.
+2. Call `sync` with the **vault encryption password** from the Termius app
+   (not the Google password). Default `remember=true` writes `~/.termius/vault`
+   mode `0600`.
+3. Call `hosts`. Later reads auto-pull when the cache is older than
+   `TERMIUS_SYNC_TTL`.
+
+If this machine has never signed in:
+
+1. Call `status`. Expect `logged_in: false`.
+2. Google: call `login` with `method=google`. Open the returned URL. Sign in.
+   When the page tries to open Termius, copy
+   `termius://app/continue-sso?...`. Call `login_complete` with that URL and
+   the vault encryption password.
+3. Email: call `login` with `method=email`, username, and the vault password.
+   Add `otp` if 2FA is on.
+4. Call `hosts`.
+
+The process never returns the vault password in a tool result.
 
 ## Tools
 
@@ -77,17 +114,8 @@ Call `status` first.
 | `exec` | Run a remote command over SSH |
 | `inventory` | `kind=groups\|identities\|keys\|snippets` |
 
-`hosts`, `host`, `exec`, and `inventory` pull automatically when the local cache is older than `TERMIUS_SYNC_TTL` and a vault password is available.
-
-`login` / `sync` with `remember=true` (the default) writes `~/.termius/vault` mode `0600`. The process never returns that password in a tool result.
-
-## Google SSO
-
-1. Call `login` with `method=google`.
-2. Open the returned URL on any device. Sign in with Google.
-3. Paste `termius://app/continue-sso?email=...&firebaseToken=...&requestId=...` into `login_complete` with the **vault encryption password** (the one from the Termius app, not the Google password).
-
-Google only proves identity. The Firebase callback is valid for about an hour.
+`hosts`, `host`, `exec`, and `inventory` pull automatically when the local
+cache is older than `TERMIUS_SYNC_TTL` and a vault password is available.
 
 ## Local data
 
