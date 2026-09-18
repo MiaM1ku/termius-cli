@@ -5,8 +5,8 @@ stdio MCP server for [Termius](https://termius.com/) Cloud.
 Repository: [MiaM1ku/termius-mcp](https://github.com/MiaM1ku/termius-mcp).
 
 `termius` is not a human CLI. An MCP client starts the binary with no args.
-The process speaks JSON-RPC on stdin/stdout. Login, vault sync, host lookup,
-and SSH exec are tools.
+The process speaks newline-delimited JSON-RPC on stdin/stdout (MCP stdio).
+Login, vault sync, host lookup, and SSH exec are tools.
 
 This tree talks to **Termius desktop 10.0.6** APIs (DeviceToken, SRP / gRPC
 login, RNCryptor v3 and Sodium v4/v5, `v4/terminal/sync/`).

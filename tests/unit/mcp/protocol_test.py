@@ -19,15 +19,16 @@ class ProtocolTest(unittest.TestCase):
         stream.seek(0)
         self.assertEqual(read_message(stream), payload)
 
-    def test_encode_has_content_length(self):
+    def test_encode_jsonl(self):
         payload = {'a': 1}
         framed = encode_message(payload)
-        self.assertTrue(framed.startswith(b'Content-Length: '))
-        self.assertIn(b'\r\n\r\n', framed)
-        body = framed.split(b'\r\n\r\n', 1)[1]
-        self.assertEqual(json.loads(body.decode('utf-8')), payload)
-        header_len = int(framed.split(b'\r\n', 1)[0].split(b':', 1)[1])
-        self.assertEqual(header_len, len(body))
+        self.assertTrue(framed.endswith(b'\n'))
+        self.assertNotIn(b'Content-Length', framed)
+        self.assertEqual(json.loads(framed.decode('utf-8')), payload)
+
+    def test_accepts_jsonl_line(self):
+        raw = b'{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'
+        self.assertEqual(read_message(io.BytesIO(raw))['method'], 'initialize')
 
     def test_accepts_lf_headers(self):
         body = b'{"jsonrpc":"2.0","id":1}'

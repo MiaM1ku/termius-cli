@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP stdio framing: Content-Length headers + JSON-RPC."""
+"""MCP stdio framing: newline-delimited JSON-RPC.
+
+The MCP stdio transport is JSONL. OMP, Codex, and the spec send one JSON
+object per line with no Content-Length headers. LSP-style Content-Length
+frames are still accepted on read so an old client does not deadlock.
+"""
 from __future__ import unicode_literals
 
 import json
@@ -10,32 +15,42 @@ class ProtocolError(ValueError):
 
 
 def encode_message(payload):
-    """Return bytes for one MCP message (headers + JSON body)."""
+    """Return bytes for one MCP JSONL message."""
     body = json.dumps(payload, default=str, separators=(',', ':')).encode('utf-8')
-    header = 'Content-Length: {}\r\n\r\n'.format(len(body)).encode('ascii')
-    return header + body
+    if b'\n' in body:
+        raise ProtocolError('MCP JSONL payload must not contain newlines')
+    return body + b'\n'
 
 
 def write_message(stream, payload):
-    """Write one framed message and flush."""
+    """Write one JSONL message and flush."""
     stream.write(encode_message(payload))
     stream.flush()
 
 
 def read_message(stream):
-    """Read one framed JSON-RPC object from a binary stream.
+    """Read one JSON-RPC object from a binary stream.
 
-    Returns None on EOF. Accepts ``\\r\\n`` or ``\\n`` header line endings.
+    Returns None on EOF. Accepts JSONL (MCP) and Content-Length (legacy).
     """
+    line = stream.readline()
+    if not line:
+        return None
+    stripped = line.lstrip()
+    if stripped.startswith(b'{') or stripped.startswith(b'['):
+        return _loads(line)
+    return _read_content_length(stream, line)
+
+
+def _read_content_length(stream, first_line):
     headers = {}
-    saw_header = False
+    lines = [first_line]
     while True:
-        line = stream.readline()
+        line = lines.pop(0) if lines else stream.readline()
         if not line:
-            return None if not saw_header else None
+            return None
         if line in (b'\r\n', b'\n'):
             break
-        saw_header = True
         try:
             decoded = line.decode('ascii')
         except UnicodeDecodeError:
@@ -56,6 +71,10 @@ def read_message(stream):
     body = _read_exact(stream, length)
     if body is None:
         return None
+    return _loads(body)
+
+
+def _loads(body):
     try:
         return json.loads(body.decode('utf-8'))
     except ValueError as exc:
