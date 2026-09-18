@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from termius.core.models.terminal import Host, Identity, SshConfig
 from termius.mcp.server import handle_rpc
+from termius.core.ssh_exec import SshExecError
+from termius.core.ssh_files import SshFileError
 from termius.mcp.tools import ToolError, call_tool
 from termius.runtime import Runtime
 
@@ -107,6 +109,90 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(data['stdout'], 'Linux\n')
         self.assertIn('exit 0', summary)
 
+    def test_files_shape(self):
+        self._sign_in()
+        saved = self._add_host()
+        fake = {
+            'host': 'web',
+            'address': '10.0.0.1',
+            'username': 'root',
+            'action': 'list',
+            'path': '/home/root',
+            'entries': [{'name': 'a', 'type': 'file', 'size': 1}],
+            'count': 1,
+            'ok': True,
+        }
+        with patch('termius.mcp.tools.ensure_fresh', return_value={}):
+            with patch(
+                'termius.mcp.tools.run_file_action', return_value=dict(fake)
+            ):
+                data, summary = call_tool(
+                    self.runtime, 'files',
+                    {'name': saved.label, 'action': 'list'},
+                )
+        self.assertTrue(data['ok'])
+        self.assertEqual(data['count'], 1)
+        self.assertIn('1 entries', summary)
+
+    def test_files_rejects_bad_action(self):
+        self._sign_in()
+        with patch('termius.mcp.tools.ensure_fresh', return_value={}):
+            with self.assertRaises(ToolError) as caught:
+                call_tool(
+                    self.runtime, 'files',
+                    {'name': 'web', 'action': 'chmod'},
+                )
+        self.assertEqual(caught.exception.code, 'invalid_argument')
+
+    def test_files_requires_path(self):
+        self._sign_in()
+        with patch('termius.mcp.tools.ensure_fresh', return_value={}):
+            with self.assertRaises(ToolError) as caught:
+                call_tool(
+                    self.runtime, 'files',
+                    {'name': 'web', 'action': 'read'},
+                )
+        self.assertEqual(caught.exception.code, 'invalid_argument')
+
+    def test_files_ssh_error(self):
+        self._sign_in()
+        saved = self._add_host()
+        with patch('termius.mcp.tools.ensure_fresh', return_value={}):
+            with patch(
+                'termius.mcp.tools.run_file_action',
+                side_effect=SshFileError('permission denied'),
+            ):
+                with self.assertRaises(ToolError) as caught:
+                    call_tool(
+                        self.runtime, 'files',
+                        {
+                            'name': saved.label,
+                            'action': 'read',
+                            'path': '/etc/shadow',
+                        },
+                    )
+        self.assertEqual(caught.exception.code, 'file_failed')
+
+    def test_files_connect_error(self):
+        self._sign_in()
+        saved = self._add_host()
+        with patch('termius.mcp.tools.ensure_fresh', return_value={}):
+            with patch(
+                'termius.mcp.tools.run_file_action',
+                side_effect=SshExecError('SSH to 10.0.0.1 failed: timeout'),
+            ):
+                with self.assertRaises(ToolError) as caught:
+                    call_tool(
+                        self.runtime, 'files',
+                        {'name': saved.label, 'action': 'list'},
+                    )
+        self.assertEqual(caught.exception.code, 'ssh_failed')
+
+    def test_files_requires_login(self):
+        with self.assertRaises(ToolError) as caught:
+            call_tool(self.runtime, 'files', {'action': 'list'})
+        self.assertEqual(caught.exception.code, 'not_signed_in')
+
     def test_inventory_rejects_bad_kind(self):
         self._sign_in()
         with patch('termius.mcp.tools.ensure_fresh', return_value={}):
@@ -157,7 +243,7 @@ class ToolsTest(unittest.TestCase):
         )
         self.assertEqual(response['result']['serverInfo']['version'], '3.0.0')
 
-    def test_tools_list_has_nine(self):
+    def test_tools_list_has_ten(self):
         response = handle_rpc(self.runtime, {
             'jsonrpc': '2.0',
             'id': 2,
@@ -168,6 +254,6 @@ class ToolsTest(unittest.TestCase):
             names,
             [
                 'status', 'login', 'login_complete', 'logout', 'sync',
-                'hosts', 'host', 'exec', 'inventory',
+                'hosts', 'host', 'exec', 'files', 'inventory',
             ],
         )

@@ -14,10 +14,11 @@ PROTOCOL_VERSION = '2024-11-05'
 LOGGER = logging.getLogger(__name__)
 
 INSTRUCTIONS = (
-    'Termius Cloud inventory and SSH exec. Call status first. '
+    'Termius Cloud inventory, SSH exec, and SFTP files. Call status first. '
     'If not signed in, use login (google is two-step: login then '
-    'login_complete). hosts, host, exec, and inventory auto-pull the vault '
-    'when a password is remembered. Never echo vault or host passwords.'
+    'login_complete). hosts, host, exec, files, and inventory auto-pull '
+    'the vault when a password is remembered. Never echo vault or host '
+    'passwords.'
 )
 
 

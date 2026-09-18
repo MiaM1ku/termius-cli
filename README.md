@@ -6,7 +6,7 @@ Repository: [MiaM1ku/termius-mcp](https://github.com/MiaM1ku/termius-mcp).
 
 `termius` is not a human CLI. An MCP client starts the binary with no args.
 The process speaks newline-delimited JSON-RPC on stdin/stdout (MCP stdio).
-Login, vault sync, host lookup, and SSH exec are tools.
+Login, vault sync, host lookup, SSH exec, and SFTP file transfer are tools.
 
 This tree talks to **Termius desktop 10.0.6** APIs (DeviceToken, SRP / gRPC
 login, RNCryptor v3 and Sodium v4/v5, `v4/terminal/sync/`).
@@ -112,10 +112,16 @@ Call `status` first.
 | `hosts` | List hosts (optional `query`) |
 | `host` | One host + merged SSH settings + `ssh_command` |
 | `exec` | Run a remote command over SSH |
+| `files` | SFTP list / stat / read / write / get / put / mkdir / rm / rename |
 | `inventory` | `kind=groups\|identities\|keys\|snippets` |
 
-`hosts`, `host`, `exec`, and `inventory` pull automatically when the local
-cache is older than `TERMIUS_SYNC_TTL` and a vault password is available.
+`hosts`, `host`, `exec`, `files`, and `inventory` pull automatically when the
+local cache is older than `TERMIUS_SYNC_TTL` and a vault password is available.
+
+`files` uses SFTP on the same SSH credentials as `exec`. `get` and `put` copy
+between the MCP host filesystem and the remote host. `read` and `write` move
+file content through the tool result (max 200000 bytes). `get` and `put` allow
+up to 50 MiB. `list` defaults `path` to the SSH login directory.
 
 ## Local data
 

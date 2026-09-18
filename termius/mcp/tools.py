@@ -7,6 +7,8 @@ from ..core.exceptions import ApiError, NotSignedIn
 from ..core.models.terminal import Group, Host, Identity, Snippet, SshKey
 from ..core.ssh_command import render_command
 from ..core.ssh_exec import SshExecError, run_host_command
+from ..core.ssh_files import ACTIONS as FILE_ACTIONS
+from ..core.ssh_files import SshFileError, run_file_action
 from ..core.ssh_merge import HostLookupError, find_host, get_merged_ssh_config
 from ..session import (
     login_email, login_google_complete, login_google_start, logout,
@@ -146,7 +148,7 @@ TOOLS = [
             'List Termius hosts (id, label, address, group, username). '
             'Auto-pulls a stale vault first. Filter with query against '
             'label, address, group, or username. Use host for full SSH '
-            'settings. Use exec to run a command.'
+            'settings. Use exec to run a command. Use files for SFTP.'
         ),
         'inputSchema': {
             'type': 'object',
@@ -204,6 +206,73 @@ TOOLS = [
                 },
             },
             'required': ['name', 'command'],
+        },
+    },
+    {
+        'name': 'files',
+        'description': (
+            'Manage files on a Termius host over SFTP. Uses the username, '
+            'password, or key from the vault. Auto-pulls a stale vault '
+            'first. action=list lists a directory; stat shows one path; '
+            'read returns file content (utf-8 or base64, max 200000 '
+            'bytes); write uploads content; get copies remote -> '
+            'local_path on this machine; put copies local_path -> remote; '
+            'mkdir creates a directory (recursive=true creates parents); '
+            'rm deletes a file or empty dir (recursive=true deletes a '
+            'tree); rename moves a remote path (needs dest). Prefer this '
+            'over exec for copy and edit. Never echo secrets from file '
+            'content unless the user asked.'
+        ),
+        'inputSchema': {
+            'type': 'object',
+            'properties': {
+                'name': {
+                    'type': 'string',
+                    'description': 'Host numeric id or exact label',
+                },
+                'action': {
+                    'type': 'string',
+                    'enum': list(FILE_ACTIONS),
+                    'description': 'SFTP operation',
+                },
+                'path': {
+                    'type': 'string',
+                    'description': (
+                        'Remote path. Default . (login directory) for list'
+                    ),
+                },
+                'local_path': {
+                    'type': 'string',
+                    'description': (
+                        'Path on the MCP host filesystem (get and put)'
+                    ),
+                },
+                'dest': {
+                    'type': 'string',
+                    'description': 'Destination remote path (rename)',
+                },
+                'content': {
+                    'type': 'string',
+                    'description': 'File text or base64 payload (write)',
+                },
+                'encoding': {
+                    'type': 'string',
+                    'enum': ['utf-8', 'base64'],
+                    'description': 'write payload encoding. Default utf-8',
+                },
+                'recursive': {
+                    'type': 'boolean',
+                    'description': (
+                        'mkdir/write/put create parents; rm deletes a tree. '
+                        'Default false'
+                    ),
+                },
+                'timeout': {
+                    'type': 'integer',
+                    'description': 'Seconds to wait (default 60)',
+                },
+            },
+            'required': ['name', 'action'],
         },
     },
     {
@@ -424,11 +493,7 @@ def handle_exec(runtime, arguments):
     except HostLookupError as exc:
         raise ToolError(str(exc), code='host_not_found')
     ssh_config = get_merged_ssh_config(host)
-    timeout = arguments.get('timeout') or 60
-    try:
-        timeout = int(timeout)
-    except (TypeError, ValueError):
-        raise ToolError('timeout must be an integer', code='invalid_argument')
+    timeout = _int_timeout(arguments.get('timeout'))
     try:
         result = run_host_command(
             host, ssh_config, command, timeout=timeout,
@@ -440,6 +505,103 @@ def handle_exec(runtime, arguments):
         result.get('exit_code'), result.get('host')
     )
     return result, summary
+
+
+def _int_timeout(value):
+    if value is None:
+        return 60
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ToolError('timeout must be an integer', code='invalid_argument')
+
+
+def _lookup_host(runtime, name):
+    try:
+        return find_host(runtime.storage, name)
+    except HostLookupError as exc:
+        raise ToolError(str(exc), code='host_not_found')
+
+
+def _files_path(arguments, action):
+    path = arguments.get('path')
+    if path is not None and str(path).strip() != '':
+        return path
+    if action == 'list':
+        return '.'
+    raise ToolError('path is required', code='invalid_argument')
+
+
+def _files_args(arguments):
+    action = (arguments.get('action') or '').strip().lower()
+    if action not in FILE_ACTIONS:
+        raise ToolError(
+            'action must be {}'.format(', '.join(FILE_ACTIONS)),
+            code='invalid_argument',
+        )
+    return action, _files_path(arguments, action), _int_timeout(
+        arguments.get('timeout')
+    )
+
+
+def _files_extra(arguments):
+    return {
+        'local_path': arguments.get('local_path'),
+        'dest': arguments.get('dest'),
+        'content': arguments.get('content'),
+        'encoding': arguments.get('encoding'),
+        'recursive': _bool_arg(arguments, 'recursive', False),
+    }
+
+
+def _invoke_files(host, action, path, timeout, arguments):
+    ssh_config = get_merged_ssh_config(host)
+    try:
+        result = run_file_action(
+            host, ssh_config, action, path,
+            timeout=timeout, extra=_files_extra(arguments),
+        )
+    except SshFileError as exc:
+        raise ToolError(str(exc), code='file_failed')
+    except SshExecError as exc:
+        raise ToolError(str(exc), code='ssh_failed')
+    result.setdefault('ok', True)
+    return result
+
+
+def _files_summary(result):
+    action = result.get('action')
+    host = result.get('host')
+    path = result.get('path')
+    known = {
+        'list': '{} entries in {} on {}.'.format(
+            result.get('count'), path, host
+        ),
+        'read': 'read {} ({} bytes) on {}.'.format(
+            path, result.get('size'), host
+        ),
+        'stat': '{} {} on {}.'.format(result.get('type'), path, host),
+        'get': 'get {} -> {} on {}.'.format(
+            path, result.get('local_path'), host
+        ),
+        'put': 'put {} -> {} on {}.'.format(
+            result.get('local_path'), path, host
+        ),
+        'rename': 'rename {} -> {} on {}.'.format(
+            path, result.get('dest'), host
+        ),
+    }
+    if action in known:
+        return known[action]
+    return '{} {} on {}.'.format(action, path, host)
+
+
+def handle_files(runtime, arguments):
+    _auto_sync(runtime)
+    action, path, timeout = _files_args(arguments)
+    host = _lookup_host(runtime, arguments.get('name'))
+    result = _invoke_files(host, action, path, timeout, arguments)
+    return result, _files_summary(result)
 
 
 def handle_inventory(runtime, arguments):
@@ -498,6 +660,7 @@ HANDLERS = {
     'hosts': handle_hosts,
     'host': handle_host,
     'exec': handle_exec,
+    'files': handle_files,
     'inventory': handle_inventory,
 }
 
